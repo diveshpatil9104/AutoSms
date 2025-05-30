@@ -6,10 +6,12 @@
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
-
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
 
     <application
         android:allowBackup="true"
@@ -22,7 +24,6 @@
         android:theme="@style/Theme.AutoWish"
         tools:targetApi="31">
 
-        <!-- Your launcher activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -35,13 +36,19 @@
         </activity>
 
         <!-- Boot Receiver for rescheduling birthday checks -->
-        <receiver android:name=".receiver.BootReceiver"
+        <receiver
+            android:name=".BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-    </application>
 
+        <!-- Alarm Receiver -->
+        <receiver
+            android:name=".BirthdayAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+    </application>
 </manifest>
