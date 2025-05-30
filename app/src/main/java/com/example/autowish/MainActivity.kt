@@ -2,48 +2,74 @@ package com.example.autowish
 
 import android.Manifest
 import android.app.AlarmManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import com.example.autowish.ui.theme.AutoWishTheme
 
 class MainActivity : ComponentActivity() {
+    private val TAG = "MainActivity"
+
     private val requestPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-        if (permissions[Manifest.permission.SEND_SMS] == true) {
+        val allGranted = permissions.all { it.value }
+        if (allGranted) {
+            Log.d(TAG, "All permissions granted, scheduling alarm")
             AlarmUtils.scheduleDailyAlarm(this)
+        } else {
+            Log.e(TAG, "Required permissions not granted: $permissions")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Request SEND_SMS permission
-        requestPermissions.launch(arrayOf(Manifest.permission.SEND_SMS))
-
-        // Request SCHEDULE_EXACT_ALARM permission on Android 12+
+        // Request permissions
+        val permissions = mutableListOf(Manifest.permission.SEND_SMS, Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
-            if (!alarmManager.canScheduleExactAlarms()) {
-                startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
+            permissions.add(Manifest.permission.SCHEDULE_EXACT_ALARM)
+        }
+        requestPermissions.launch(permissions.toTypedArray())
+
+        // Request to ignore battery optimizations
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                Log.d(TAG, "Requesting to ignore battery optimizations")
+                startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                })
             } else {
+                Log.d(TAG, "Battery optimizations already disabled")
+            }
+        }
+
+        // Request SCHEDULE_EXACT_ALARM on Android 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                Log.d(TAG, "Requesting SCHEDULE_EXACT_ALARM permission")
+                startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+            } else {
+                Log.d(TAG, "SCHEDULE_EXACT_ALARM permission already granted")
                 AlarmUtils.scheduleDailyAlarm(this)
             }
         } else {
             AlarmUtils.scheduleDailyAlarm(this)
         }
-
-        // Request to ignore battery optimizations
-        Utils.requestIgnoreBatteryOptimizations(this)
 
         setContent {
             AutoWishTheme {
