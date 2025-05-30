@@ -10,6 +10,7 @@ import java.util.*
 
 object AlarmUtils {
     private const val TAG = "AlarmUtils"
+    private const val TEST_MODE = false // Set to false for production (daily at midnight)
 
     fun scheduleDailyAlarm(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -22,7 +23,17 @@ object AlarmUtils {
         )
 
         val calendar = Calendar.getInstance().apply {
-            add(Calendar.MINUTE, 1) // Trigger in 1 minute for testing
+            if (TEST_MODE) {
+                add(Calendar.MINUTE, 1) // Trigger in 1 minute for testing
+            } else {
+                set(Calendar.HOUR_OF_DAY, 0) // Midnight for production
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_MONTH, 1) // Next day if time has passed
+                }
+            }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
@@ -36,9 +47,22 @@ object AlarmUtils {
                 calendar.timeInMillis,
                 pendingIntent
             )
-            Log.d(TAG, "Test alarm scheduled for ${calendar.time} (in 1 minute)")
+            Log.d(TAG, "Alarm scheduled for ${calendar.time} (TEST_MODE: $TEST_MODE)")
         } catch (e: SecurityException) {
             Log.e(TAG, "Failed to schedule alarm: ${e.message}")
         }
+    }
+
+    fun cancelAlarm(context: Context) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, BirthdayAlarmReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        alarmManager.cancel(pendingIntent)
+        Log.d(TAG, "Alarm canceled")
     }
 }
