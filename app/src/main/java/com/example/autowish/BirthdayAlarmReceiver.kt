@@ -11,7 +11,7 @@ import java.util.*
 
 class BirthdayAlarmReceiver : BroadcastReceiver() {
     private val TAG = "BirthdayAlarmReceiver"
-    private val TEST_MODE = false // Set to false for production
+    private val TEST_MODE = false // Production mode
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SENT_DATE = "lastSentDate"
 
@@ -22,7 +22,7 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
         val today = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date())
         val lastSentDate = prefs.getString(PREF_SENT_DATE, "")
 
-        // Skip sending if already sent today (in test mode)
+        // Skip sending if already sent today
         if (!TEST_MODE && lastSentDate == today) {
             Log.d(TAG, "SMS already sent today ($today), skipping")
             // Still reschedule for next day
@@ -35,20 +35,24 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             val list = db.birthdayDao().getBirthdaysByDate(today)
             Log.d(TAG, "Found ${list.size} birthdays for $today")
+            if (list.isEmpty()) {
+                Log.d(TAG, "No birthdays found for $today")
+            }
             list.forEach {
                 Log.d(TAG, "Sending SMS to ${it.phoneNumber} for ${it.name}")
                 sendSMS(context, it.phoneNumber, it.message)
             }
 
-            // Update last sent date (only in production mode)
-            if (!TEST_MODE) {
+            // Update last sent date
+            if (!TEST_MODE && list.isNotEmpty()) {
                 prefs.edit().putString(PREF_SENT_DATE, today).apply()
+                Log.d(TAG, "Updated SharedPreferences: lastSentDate = $today")
             }
 
-            // Reschedule alarm for next trigger
+            // Reschedule alarm for next midnight
             AlarmUtils.cancelAlarm(context)
             AlarmUtils.scheduleDailyAlarm(context)
-            Log.d(TAG, "Alarm rescheduled for ${if (TEST_MODE) "1 minute" else "next day"}")
+            Log.d(TAG, "Alarm rescheduled for next midnight")
         }
     }
 }
