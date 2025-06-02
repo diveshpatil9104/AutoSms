@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,6 +19,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -39,6 +42,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Make status bar transparent and content fullscreen
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+
+        // Adjust icon color based on theme
+        val isDarkTheme = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val insetsController = WindowInsetsControllerCompat(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = !isDarkTheme
+        insetsController.isAppearanceLightNavigationBars = !isDarkTheme
+
+        // Permissions
         val permissions = mutableListOf(
             Manifest.permission.SEND_SMS,
             Manifest.permission.POST_NOTIFICATIONS,
@@ -50,6 +65,7 @@ class MainActivity : ComponentActivity() {
         }
         requestPermissions.launch(permissions.toTypedArray())
 
+        // Battery optimization
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
@@ -60,6 +76,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Schedule alarm
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (!alarmManager.canScheduleExactAlarms()) {
@@ -74,6 +91,7 @@ class MainActivity : ComponentActivity() {
             AlarmUtils.scheduleDailyAlarm(this)
         }
 
+        // Compose content
         setContent {
             AutoWishTheme {
                 Surface(

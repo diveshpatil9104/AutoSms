@@ -53,7 +53,10 @@ fun DatabaseScreen(navController: NavController) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var hasData by remember { mutableStateOf(false) }
+    var showDeleteAllDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    var showImportDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Load birthdays
     LaunchedEffect(searchQuery, filterType, sortOrder) {
@@ -94,6 +97,7 @@ fun DatabaseScreen(navController: NavController) {
         }
     }
 
+
     // CSV import
     val importCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
@@ -108,7 +112,9 @@ fun DatabaseScreen(navController: NavController) {
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
-                        showNotification(context, "CSV Imported", "${entries.size} birthdays imported")
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("${entries.size} birthdays imported")
+                        }
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
@@ -143,7 +149,9 @@ fun DatabaseScreen(navController: NavController) {
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
-                        showNotification(context, "CSV Merged", "$insertedCount birthdays merged")
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("$insertedCount birthdays merged")
+                        }
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
@@ -162,7 +170,16 @@ fun DatabaseScreen(navController: NavController) {
         topBar = {
             if (selectedItems.isEmpty()) {
                 TopAppBar(
-                    title = { Text("Database", style = MaterialTheme.typography.titleLarge) },
+                    title = {
+                        Text(
+                            "Birthdays",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 28.sp,
+                                letterSpacing = 4.sp
+                            )
+                        )
+                    },
                     actions = {
                         IconButton(onClick = { showForm = true }) {
                             Icon(Icons.Default.Add, contentDescription = "Add Entry")
@@ -179,7 +196,7 @@ fun DatabaseScreen(navController: NavController) {
                                 text = { Text("Import New CSV") },
                                 onClick = {
                                     showMenu = false
-                                    importCsvPicker.launch("text/*")
+                                    showImportDialog = true
                                 }
                             )
                             DropdownMenuItem(
@@ -223,17 +240,34 @@ fun DatabaseScreen(navController: NavController) {
                                     }
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Delete All") },
+                                onClick = {
+                                    showMenu = false
+                                    showDeleteAllDialog = true
+                                },
+                                enabled = hasData
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                        titleContentColor = MaterialTheme.colorScheme.primary
                     ),
                     modifier = Modifier.background(Color.Transparent)
                 )
             } else {
                 TopAppBar(
-                    title = { Text("${selectedItems.size} selected", style = MaterialTheme.typography.titleLarge) },
+                    title = {
+                        Text(
+                            "${selectedItems.size} selected",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 24.sp,
+                                letterSpacing = 3.sp
+                            )
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = {
                             selectedItems = emptySet()
@@ -244,6 +278,7 @@ fun DatabaseScreen(navController: NavController) {
                     },
                     actions = {
                         IconButton(onClick = {
+                            val count = selectedItems.size
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
                                     selectedItems.forEach { id -> db.birthdayDao().deleteById(id) }
@@ -251,7 +286,9 @@ fun DatabaseScreen(navController: NavController) {
                                     withContext(Dispatchers.Main) {
                                         birthdayList = newList
                                         hasData = newList.isNotEmpty()
-                                        showNotification(context, "Entries Deleted", "${selectedItems.size} entries deleted")
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("$count entries deleted")
+                                        }
                                         selectedItems = emptySet()
                                         isSelectionMode = false
                                     }
@@ -298,7 +335,7 @@ fun DatabaseScreen(navController: NavController) {
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                        titleContentColor = MaterialTheme.colorScheme.primary
                     ),
                     modifier = Modifier.background(Color.Transparent)
                 )
@@ -320,8 +357,9 @@ fun DatabaseScreen(navController: NavController) {
                 )
             }
         },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         containerColor = Color.Transparent,
-        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+        modifier = Modifier
     ) { innerPadding ->
         Surface(
             modifier = Modifier
@@ -428,6 +466,73 @@ fun DatabaseScreen(navController: NavController) {
         }
     }
 
+    // Confirmation dialog for Delete All
+    if (showDeleteAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllDialog = false },
+            title = { Text("Delete All Entries") },
+            text = { Text("Are you sure you want to delete all entries? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteAllDialog = false
+                        isLoading = true
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                db.birthdayDao().deleteAll()
+                                val newList = db.birthdayDao().getAll()
+                                withContext(Dispatchers.Main) {
+                                    birthdayList = newList
+                                    hasData = newList.isNotEmpty()
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar("All birthdays have been deleted")
+                                    }
+                                    isSelectionMode = false
+                                    selectedItems = emptySet()
+                                }
+                                AlarmUtils.scheduleDailyAlarm(context)
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    errorMessage = "Failed to delete all entries: ${e.message}"
+                                    Log.e("DatabaseScreen", "Delete all error", e)
+                                }
+                            } finally {
+                                withContext(Dispatchers.Main) {
+                                    isLoading = false
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("Import New CSV") },
+            text = { Text("Importing a new file will delete all existing entries. To keep existing entries and add new ones, select 'Merge CSV' instead.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showImportDialog = false
+                        importCsvPicker.launch("text/*")
+                    }
+                ) { Text("Import") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
     if (showForm) {
         BirthdayEntryForm(
             onSave = { entry ->
@@ -439,11 +544,11 @@ fun DatabaseScreen(navController: NavController) {
                         withContext(Dispatchers.Main) {
                             birthdayList = newList
                             hasData = newList.isNotEmpty()
-                            showNotification(
-                                context,
-                                "Birthday Saved",
-                                "Birthday for ${entry.name} ${if (editingEntry != null) "updated" else "saved"}"
-                            )
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(
+                                    "Birthday for ${entry.name} ${if (editingEntry != null) "updated" else "saved"}"
+                                )
+                            }
                             showForm = false
                             editingEntry = null
                             selectedItems = emptySet()
@@ -473,6 +578,7 @@ fun DatabaseScreen(navController: NavController) {
         )
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun BirthdayListItem(
@@ -500,7 +606,7 @@ fun BirthdayListItem(
             supportingContent = {
                 Column {
                     Text(
-                        text = entry.phoneNumber,
+                        text = "Phone No. : ${entry.phoneNumber}",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -541,7 +647,7 @@ fun BirthdayListItem(
                 .fillMaxWidth()
                 .combinedClickable(
                     interactionSource = interactionSource,
-                    indication = LocalIndication.current, // ✅ new ripple API
+                    indication = LocalIndication.current,
                     onClick = {
                         if (isSelectionMode) onClick()
                     },
@@ -557,6 +663,7 @@ fun BirthdayListItem(
         )
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EnhancedSearchBarSection(
@@ -570,7 +677,6 @@ fun EnhancedSearchBarSection(
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // ✅ Card-style search bar (design upgrade)
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -615,7 +721,6 @@ fun EnhancedSearchBarSection(
             }
         }
 
-        // Chips Section
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
@@ -623,28 +728,21 @@ fun EnhancedSearchBarSection(
                 .horizontalScroll(rememberScrollState())
                 .padding(vertical = 8.dp)
         ) {
-            // All Chip
             FilterChip(
                 selected = filterType == null,
                 onClick = { onFilterTypeChange(null) },
                 label = { Text("All") }
             )
-
-            // Student Chip
             FilterChip(
                 selected = filterType == "Student",
                 onClick = { onFilterTypeChange(if (filterType == "Student") null else "Student") },
                 label = { Text("Students") }
             )
-
-            // Staff Chip
             FilterChip(
                 selected = filterType == "Staff",
                 onClick = { onFilterTypeChange(if (filterType == "Staff") null else "Staff") },
                 label = { Text("Staff") }
             )
-
-            // Sort By Chip anchored in Box
             Box {
                 FilterChip(
                     selected = sortMenuExpanded,
@@ -658,7 +756,6 @@ fun EnhancedSearchBarSection(
                         selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 )
-
                 DropdownMenu(
                     expanded = sortMenuExpanded,
                     onDismissRequest = { sortMenuExpanded = false }
@@ -671,7 +768,7 @@ fun EnhancedSearchBarSection(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("New Fisrt") },
+                        text = { Text("New First") },
                         onClick = {
                             onSortOrderChange("New First")
                             sortMenuExpanded = false

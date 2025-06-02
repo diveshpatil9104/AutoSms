@@ -28,14 +28,36 @@ fun BirthdayEntryForm(
     var phoneError by remember { mutableStateOf<String?>(null) }
     var birthDateError by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) } // Local state for error message
+
+    // Clear error message when fields change or dialog is dismissed
+    LaunchedEffect(name, phone, birthDate, personType) {
+        setErrorMessage(null)
+        errorMessage = null
+    }
 
     AlertDialog(
         onDismissRequest = {
-            if (!isLoading) onCancel()
+            if (!isLoading) {
+                setErrorMessage(null)
+                errorMessage = null
+                onCancel()
+            }
         },
         title = { Text(if (initialEntry == null) "Add Birthday" else "Edit Birthday") },
         text = {
             Column {
+                // Display error message if it exists
+                errorMessage?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                    )
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = {
@@ -119,6 +141,7 @@ fun BirthdayEntryForm(
                     birthDateError = if (!birthDate.matches(Regex("\\d{2}-\\d{2}"))) "Birth date must be in MM-dd format" else null
                     if (personType !in listOf("Student", "Staff")) {
                         setErrorMessage("Select a valid person type")
+                        errorMessage = "Select a valid person type"
                         return@TextButton
                     }
                     if (nameError != null || phoneError != null || birthDateError != null) {
@@ -126,6 +149,7 @@ fun BirthdayEntryForm(
                     }
                     isLoading = true
                     setErrorMessage(null)
+                    errorMessage = null
                     coroutineScope.launch(Dispatchers.IO) {
                         // Skip duplicate check for edits
                         if (initialEntry == null) {
@@ -133,6 +157,7 @@ fun BirthdayEntryForm(
                             if (existing.isNotEmpty()) {
                                 withContext(Dispatchers.Main) {
                                     setErrorMessage("Entry with this name and phone number already exists")
+                                    errorMessage = "Entry with this name and phone number already exists"
                                     isLoading = false
                                 }
                                 return@launch
@@ -158,7 +183,11 @@ fun BirthdayEntryForm(
         },
         dismissButton = {
             TextButton(
-                onClick = onCancel,
+                onClick = {
+                    setErrorMessage(null)
+                    errorMessage = null
+                    onCancel()
+                },
                 enabled = !isLoading
             ) {
                 Text("Cancel")

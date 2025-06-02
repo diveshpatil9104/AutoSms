@@ -45,6 +45,7 @@ fun HomeScreen(navController: NavController) {
     var showForm by remember { mutableStateOf(false) }
     var showCsvDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() } // Added for Snackbar
 
     // Function to update upcoming birthdays
     suspend fun updateUpcomingBirthdays() {
@@ -102,7 +103,9 @@ fun HomeScreen(navController: NavController) {
                     updateUpcomingBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
-                        showNotification(context, "CSV Imported", "${entries.size} birthdays imported!")
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("${entries.size} birthdays imported!")
+                        }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -135,7 +138,9 @@ fun HomeScreen(navController: NavController) {
                     updateUpcomingBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
-                        showNotification(context, "CSV Merged", "$insertedCount birthdays merged!")
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("$insertedCount birthdays merged!")
+                        }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -190,6 +195,7 @@ fun HomeScreen(navController: NavController) {
                 )
             }
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) }, // Added SnackbarHost
         containerColor = Color.Transparent
     ) { innerPadding ->
         Surface(
@@ -218,8 +224,6 @@ fun HomeScreen(navController: NavController) {
                     Text(
                         text = "Upload CSV file or add data manually",
                         style = MaterialTheme.typography.bodyMedium,
-//                        fontSize = 16.sp,
-
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         modifier = Modifier
                             .padding(bottom = 18.dp)
@@ -237,7 +241,7 @@ fun HomeScreen(navController: NavController) {
                             shape = RoundedCornerShape(16.dp),
                             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
                             ),
                             modifier = Modifier
                                 .size(110.dp)
@@ -259,7 +263,7 @@ fun HomeScreen(navController: NavController) {
                             shape = RoundedCornerShape(16.dp),
                             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
                             ),
                             modifier = Modifier
                                 .size(110.dp)
@@ -278,7 +282,6 @@ fun HomeScreen(navController: NavController) {
                             }
                         }
                     }
-
                 }
                 item {
                     Divider(
@@ -342,7 +345,7 @@ fun HomeScreen(navController: NavController) {
         AlertDialog(
             onDismissRequest = { showCsvDialog = false },
             title = { Text("Upload CSV") },
-            text = { Text("Choose an option for uploading the CSV file.") },
+            text = { Text("Importing a new file will delete all existing entries. To keep existing entries and add new ones, select 'Merge CSV' instead.\"\n") },
             confirmButton = {
                 TextButton(onClick = {
                     showCsvDialog = false
@@ -374,7 +377,9 @@ fun HomeScreen(navController: NavController) {
                     updateUpcomingBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
-                        showNotification(context, "Birthday Saved", "Birthday for ${entry.name} saved!")
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("Birthday for ${entry.name} saved!")
+                        }
                         showForm = false
                         isLoading = false
                     }

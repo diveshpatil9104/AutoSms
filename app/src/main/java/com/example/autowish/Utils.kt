@@ -74,7 +74,7 @@ fun BirthdayCard(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = entry.phoneNumber,
+                    text = "Phone No. : ${entry.phoneNumber}",
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
