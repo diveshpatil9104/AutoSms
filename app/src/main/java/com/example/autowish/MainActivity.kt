@@ -16,7 +16,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.example.autowish.ui.theme.AutoWishTheme
 
 class MainActivity : ComponentActivity() {
@@ -35,14 +39,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Request permissions
-        val permissions = mutableListOf(Manifest.permission.SEND_SMS, Manifest.permission.POST_NOTIFICATIONS)
+        val permissions = mutableListOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.ACCESS_NETWORK_STATE
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.SCHEDULE_EXACT_ALARM)
         }
         requestPermissions.launch(permissions.toTypedArray())
 
-        // Request to ignore battery optimizations
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
@@ -50,12 +57,9 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                     data = Uri.parse("package:$packageName")
                 })
-            } else {
-                Log.d(TAG, "Battery optimizations already disabled")
             }
         }
 
-        // Request SCHEDULE_EXACT_ALARM on Android 12+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             if (!alarmManager.canScheduleExactAlarms()) {
@@ -64,7 +68,6 @@ class MainActivity : ComponentActivity() {
                     data = Uri.parse("package:$packageName")
                 })
             } else {
-                Log.d(TAG, "SCHEDULE_EXACT_ALARM permission already granted")
                 AlarmUtils.scheduleDailyAlarm(this)
             }
         } else {
@@ -73,10 +76,22 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AutoWishTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    BirthdayEntryScreen()
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    AppNavigation()
                 }
             }
         }
+    }
+}
+
+@Composable
+fun AppNavigation() {
+    val navController = rememberNavController()
+    NavHost(navController = navController, startDestination = "home") {
+        composable("home") { HomeScreen(navController) }
+        composable("database") { DatabaseScreen(navController) }
     }
 }

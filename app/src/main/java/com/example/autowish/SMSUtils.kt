@@ -12,8 +12,14 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
-fun sendSMS(context: Context, phoneNumber: String, message: String) {
+fun sendSMS(context: Context, phoneNumber: String, name: String, personType: String) {
     val TAG = "SmsUtils"
+    val message = when (personType) {
+        "Student" -> "Happy Birthday $name! Wishing you a day filled with joy and a year ahead filled with learning and success."
+        "Staff" -> "Happy Birthday $name sir! Wishing you a day filled with joy and a year ahead filled with learning and success."
+        else -> return
+    }
+
     if (ActivityCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
         try {
             val smsManager = SmsManager.getDefault()
@@ -30,7 +36,7 @@ fun sendSMS(context: Context, phoneNumber: String, message: String) {
     }
 }
 
-private fun showNotification(context: Context, title: String, content: String) {
+fun showNotification(context: Context, title: String, content: String) {
     val channelId = "birthday_notifications"
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val channel = NotificationChannel(

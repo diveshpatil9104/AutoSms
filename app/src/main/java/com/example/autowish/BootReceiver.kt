@@ -16,7 +16,7 @@ class BootReceiver : BroadcastReceiver() {
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SENT_DATE = "lastSentDate"
     private val MAX_RETRIES = 3
-    private val RETRY_DELAY_MS = 5000L // 5 seconds
+    private val RETRY_DELAY_MS = 5000L
 
     override fun onReceive(context: Context, intent: Intent) {
         Log.d(TAG, "Received intent: ${intent.action}")
@@ -53,7 +53,7 @@ class BootReceiver : BroadcastReceiver() {
                         }
                         todayList.forEach {
                             Log.d(TAG, "Sending missed SMS to ${it.phoneNumber} for ${it.name} on $today")
-                            sendSMS(context, it.phoneNumber, it.message)
+                            sendSMS(context, it.phoneNumber, it.name, it.personType)
                         }
                         if (todayList.isNotEmpty()) {
                             prefs.edit().putString(PREF_SENT_DATE, today).apply()
@@ -69,13 +69,13 @@ class BootReceiver : BroadcastReceiver() {
                 if (lastSentDate != yesterday) {
                     try {
                         val yesterdayList = db.birthdayDao().getBirthdaysByDate(yesterday)
-                        Log.d(TAG, "Found ${yesterdayList.size} birthdays for $today after boot")
+                        Log.d(TAG, "Found ${yesterdayList.size} birthdays for $yesterday after boot")
                         if (yesterdayList.isEmpty()) {
                             Log.d(TAG, "No birthdays found for $yesterday")
                         }
                         yesterdayList.forEach {
                             Log.d(TAG, "Sending missed SMS to ${it.phoneNumber} for ${it.name} on $yesterday")
-                            sendSMS(context, it.phoneNumber, it.message)
+                            sendSMS(context, it.phoneNumber, it.name, it.personType)
                         }
                         if (yesterdayList.isNotEmpty()) {
                             prefs.edit().putString(PREF_SENT_DATE, yesterday).apply()
@@ -116,7 +116,7 @@ class BootReceiver : BroadcastReceiver() {
         if (lastSentDate != today) {
             val todayList = db.birthdayDao().getBirthdaysByDate(today)
             todayList.forEach {
-                sendSMS(context, it.phoneNumber, it.message)
+                sendSMS(context, it.phoneNumber, it.name, it.personType)
             }
             if (todayList.isNotEmpty()) {
                 prefs.edit().putString(PREF_SENT_DATE, today).apply()
@@ -125,7 +125,7 @@ class BootReceiver : BroadcastReceiver() {
         if (lastSentDate != yesterday) {
             val yesterdayList = db.birthdayDao().getBirthdaysByDate(yesterday)
             yesterdayList.forEach {
-                sendSMS(context, it.phoneNumber, it.message)
+                sendSMS(context, it.phoneNumber, it.name, it.personType)
             }
             if (yesterdayList.isNotEmpty()) {
                 prefs.edit().putString(PREF_SENT_DATE, yesterday).apply()

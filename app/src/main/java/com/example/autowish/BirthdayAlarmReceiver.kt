@@ -11,7 +11,7 @@ import java.util.*
 
 class BirthdayAlarmReceiver : BroadcastReceiver() {
     private val TAG = "BirthdayAlarmReceiver"
-    private val TEST_MODE = false // Production mode
+    private val TEST_MODE = false
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SENT_DATE = "lastSentDate"
 
@@ -22,10 +22,8 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
         val today = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date())
         val lastSentDate = prefs.getString(PREF_SENT_DATE, "")
 
-        // Skip sending if already sent today
         if (!TEST_MODE && lastSentDate == today) {
             Log.d(TAG, "SMS already sent today ($today), skipping")
-            // Still reschedule for next day
             AlarmUtils.cancelAlarm(context)
             AlarmUtils.scheduleDailyAlarm(context)
             return
@@ -40,16 +38,14 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
             }
             list.forEach {
                 Log.d(TAG, "Sending SMS to ${it.phoneNumber} for ${it.name}")
-                sendSMS(context, it.phoneNumber, it.message)
+                sendSMS(context, it.phoneNumber, it.name, it.personType)
             }
 
-            // Update last sent date
             if (!TEST_MODE && list.isNotEmpty()) {
                 prefs.edit().putString(PREF_SENT_DATE, today).apply()
                 Log.d(TAG, "Updated SharedPreferences: lastSentDate = $today")
             }
 
-            // Reschedule alarm for next midnight
             AlarmUtils.cancelAlarm(context)
             AlarmUtils.scheduleDailyAlarm(context)
             Log.d(TAG, "Alarm rescheduled for next midnight")

@@ -1,4 +1,3 @@
-
 package com.example.autowish
 
 import androidx.room.Entity
@@ -10,5 +9,5 @@ data class BirthdayEntry(
     val name: String,
     val phoneNumber: String,
     val birthDate: String,
-    val message: String
+    val personType: String // "Student" or "Staff"
 )
