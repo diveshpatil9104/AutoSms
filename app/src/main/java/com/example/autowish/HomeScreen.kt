@@ -4,12 +4,14 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
@@ -17,7 +19,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,27 +48,39 @@ fun HomeScreen(navController: NavController) {
 
     // Function to update upcoming birthdays
     suspend fun updateUpcomingBirthdays() {
-        val allBirthdays = db.birthdayDao().getAll()
-        hasData = allBirthdays.isNotEmpty()
-        val today = Calendar.getInstance()
-        val newUpcomingBirthdays = allBirthdays
-            .map { entry ->
-                val parts = entry.birthDate.split("-")
-                entry to Calendar.getInstance().apply {
-                    set(Calendar.MONTH, parts[0].toInt() - 1)
-                    set(Calendar.DAY_OF_MONTH, parts[1].toInt())
-                    set(Calendar.YEAR, today.get(Calendar.YEAR))
-                    if (timeInMillis < today.timeInMillis) {
-                        add(Calendar.YEAR, 1)
-                    }
+        try {
+            val allBirthdays = db.birthdayDao().getAll()
+            hasData = allBirthdays.isNotEmpty()
+            val today = Calendar.getInstance()
+            val newUpcomingBirthdays = allBirthdays
+                .mapNotNull { entry ->
+                    val parts = entry.birthDate.split("-")
+                    if (parts.size == 2) {
+                        val month = parts[0].toIntOrNull()
+                        val day = parts[1].toIntOrNull()
+                        if (month != null && day != null) {
+                            val nextBirthday = Calendar.getInstance().apply {
+                                set(Calendar.MONTH, month - 1)
+                                set(Calendar.DAY_OF_MONTH, day)
+                                set(Calendar.YEAR, today.get(Calendar.YEAR))
+                                if (before(today)) {
+                                    add(Calendar.YEAR, 1)
+                                }
+                            }
+                            entry to nextBirthday.timeInMillis
+                        } else null
+                    } else null
                 }
+                .sortedBy { it.second }
+                .take(7)
+                .map { it.first }
+            withContext(Dispatchers.Main) {
+                upcomingBirthdays = newUpcomingBirthdays
             }
-            .filter { it.second.timeInMillis >= today.timeInMillis }
-            .sortedBy { it.second.timeInMillis }
-            .take(7)
-            .map { it.first }
-        withContext(Dispatchers.Main) {
-            upcomingBirthdays = newUpcomingBirthdays
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                errorMessage = "Failed to load birthdays: ${e.message}"
+            }
         }
     }
 
@@ -134,8 +151,31 @@ fun HomeScreen(navController: NavController) {
     }
 
     Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "AutoWish",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 28.sp,
+                            letterSpacing = 4.sp
+                        )
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    titleContentColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .background(Color.Transparent)
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+            )
+        },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer
+            ) {
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home") },
@@ -149,7 +189,8 @@ fun HomeScreen(navController: NavController) {
                     onClick = { navController.navigate("database") }
                 )
             }
-        }
+        },
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Surface(
             modifier = Modifier
@@ -164,75 +205,134 @@ fun HomeScreen(navController: NavController) {
                     )
                 )
         ) {
-            Column(
+            LazyColumn(
                 modifier = Modifier
-                    .padding(16.dp)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "Upcoming Birthdays",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 28.sp
-                    ),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                if (upcomingBirthdays.isEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                item {
                     Text(
-                        text = "No upcoming birthdays.",
+                        text = "Upload CSV file or add data manually",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+//                        fontSize = 16.sp,
+
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .padding(bottom = 18.dp)
+                            .fillMaxWidth(),
                     )
-                } else {
-                    LazyColumn(
+                }
+                item {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 200.dp)
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        items(upcomingBirthdays) { entry ->
-                            BirthdayCard(entry)
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            ),
+                            modifier = Modifier
+                                .size(110.dp)
+                                .padding(end = 8.dp)
+                        ) {
+                            IconButton(
+                                onClick = { showCsvDialog = true },
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.upload),
+                                    contentDescription = "Upload CSV",
+                                    modifier = Modifier.size(50.dp),
+                                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
+                                )
+                            }
+                        }
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            ),
+                            modifier = Modifier
+                                .size(110.dp)
+                                .padding(start = 8.dp)
+                        ) {
+                            IconButton(
+                                onClick = { showForm = true },
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Add Entry",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(50.dp)
+                                )
+                            }
                         }
                     }
+
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    Button(
-                        onClick = { showCsvDialog = true },
+                item {
+                    Divider(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(100.dp)
-                            .padding(end = 8.dp),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text("Upload CSV", fontSize = 16.sp)
-                    }
-                    Button(
-                        onClick = { showForm = true },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(100.dp)
-                            .padding(8.dp),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text("Add Entry", fontSize = 16.sp)
-                    }
-                }
-
-                errorMessage?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                     )
+                }
+                item {
+                    Text(
+                        text = "Upcoming Birthdays",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 22.sp
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(bottom = 16.dp)
+                            .fillMaxWidth()
+                    )
+                }
+                if (upcomingBirthdays.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 32.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "No upcoming birthdays.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                } else {
+                    items(upcomingBirthdays) { entry ->
+                        BirthdayCard(entry)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+                errorMessage?.let {
+                    item {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
