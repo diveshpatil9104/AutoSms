@@ -57,7 +57,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
-    implementation ("androidx.compose.material3:material3:1.3.2")
+    implementation (libs.material3)
 
 
     implementation ("androidx.room:room-runtime:2.6.1")

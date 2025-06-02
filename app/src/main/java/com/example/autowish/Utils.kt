@@ -58,7 +58,7 @@ fun BirthdayCard(
                     }
                 )
             },
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
@@ -71,7 +71,7 @@ fun BirthdayCard(
                 Text(
                     text = entry.name,
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Text(
                     text = entry.phoneNumber,

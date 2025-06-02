@@ -5,11 +5,18 @@ import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,12 +24,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +46,7 @@ fun DatabaseScreen(navController: NavController) {
     var selectedItems by remember { mutableStateOf(setOf<Int>()) }
     var searchQuery by remember { mutableStateOf("") }
     var filterType by remember { mutableStateOf<String?>(null) }
-    var sortOrder by remember { mutableStateOf("Old to New") }
+    var sortOrder by remember { mutableStateOf("Old First") }
     var showForm by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<BirthdayEntry?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -50,21 +57,39 @@ fun DatabaseScreen(navController: NavController) {
 
     LaunchedEffect(searchQuery, filterType, sortOrder) {
         coroutineScope.launch(Dispatchers.IO) {
-            var list = when (filterType) {
-                null -> db.birthdayDao().getAll()
-                else -> db.birthdayDao().getByPersonType(filterType!!)
-            }
-            if (searchQuery.isNotEmpty()) {
-                list = list.filter { it.name.contains(searchQuery, ignoreCase = true) }
-            }
-            list = when (sortOrder) {
-                "Old to New" -> db.birthdayDao().getAllSortedAsc()
-                "New to Old" -> db.birthdayDao().getAllSortedDesc()
-                else -> list
-            }
-            withContext(Dispatchers.Main) {
-                birthdayList = list
-                hasData = list.isNotEmpty()
+            try {
+                // Fetch filtered entries
+                var list = when (filterType) {
+                    null -> db.birthdayDao().getAll()
+                    "Student" -> db.birthdayDao().getByPersonType("Student")
+                    "Staff" -> db.birthdayDao().getByPersonType("Staff")
+                    else -> db.birthdayDao().getAll()
+                }
+                Log.d("DatabaseScreen", "FilterType: $filterType, Initial list size: ${list.size}")
+
+                // Apply search query
+                if (searchQuery.isNotEmpty()) {
+                    list = list.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                    Log.d("DatabaseScreen", "After search '$searchQuery', list size: ${list.size}")
+                }
+
+                // Apply sort order on the filtered list
+                list = when (sortOrder) {
+                    "Old First" -> list.sortedBy { it.birthDate }
+                    "New First" -> list.sortedByDescending { it.birthDate }
+                    else -> list
+                }
+                Log.d("DatabaseScreen", "After sort '$sortOrder', list size: ${list.size}")
+
+                withContext(Dispatchers.Main) {
+                    birthdayList = list
+                    hasData = list.isNotEmpty()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    errorMessage = "Failed to load data: ${e.message}"
+                    Log.e("DatabaseScreen", "Error loading data", e)
+                }
             }
         }
     }
@@ -278,118 +303,60 @@ fun DatabaseScreen(navController: NavController) {
         ) {
             Column(
                 modifier = Modifier
+                    .fillMaxSize()
                     .padding(16.dp)
-                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()) // ← Enables full scroll
             ) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-                ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        label = { Text("Search by Name") },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear")
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    )
-                }
+                EnhancedSearchBarSection(
+                    searchQuery = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    filterType = filterType,
+                    onFilterTypeChange = { filterType = it },
+                    sortOrder = sortOrder,
+                    onSortOrderChange = { sortOrder = it }
+                )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    FilterChip(
-                        selected = filterType == "Student",
-                        onClick = { filterType = if (filterType == "Student") null else "Student" },
-                        label = { Text("Students") }
-                    )
-                    FilterChip(
-                        selected = filterType == "Staff",
-                        onClick = { filterType = if (filterType == "Staff") null else "Staff" },
-                        label = { Text("Staff") }
-                    )
-
-                    // Sort By Chip with Dropdown Menu
-                    var sortMenuExpanded by remember { mutableStateOf(false) }
-
-                    FilterChip(
-                        selected = false,
-                        onClick = { sortMenuExpanded = true },
-                        label = { Text("Sort by: $sortOrder") },
-                        trailingIcon = {
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = "Sort Options")
-                        }
-                    )
-
-                    DropdownMenu(
-                        expanded = sortMenuExpanded,
-                        onDismissRequest = { sortMenuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Old to New") },
-                            onClick = {
-                                sortOrder = "Old to New"
-                                sortMenuExpanded = false
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("New to Old") },
-                            onClick = {
-                                sortOrder = "New to Old"
-                                sortMenuExpanded = false
-                            }
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(16.dp))
 
                 if (birthdayList.isEmpty()) {
-                    Text(
-                        text = if (searchQuery.isEmpty() && filterType == null) "No birthdays saved." else "No matching birthdays.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
-                } else {
-                    LazyColumn(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .padding(top = 32.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        items(birthdayList) { entry ->
-                            BirthdayCard(
-                                entry = entry,
-                                isSelected = entry.id in selectedItems,
-                                onLongPress = {
-                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    selectedItems = selectedItems + entry.id
-                                    Log.d("DatabaseScreen", "Long press on entry ID: ${entry.id}")
-                                },
-                                onClick = {
-                                    if (selectedItems.isNotEmpty()) {
-                                        selectedItems = if (entry.id in selectedItems) {
-                                            selectedItems - entry.id
-                                        } else {
-                                            selectedItems + entry.id
-                                        }
-                                        Log.d("DatabaseScreen", "Click toggled selection for ID: ${entry.id}, selectedItems: $selectedItems")
+                        Text(
+                            text = when {
+                                filterType == "Student" -> "No students in the database."
+                                filterType == "Staff" -> "No staff in the database."
+                                searchQuery.isNotEmpty() -> "No matching birthdays."
+                                else -> "No birthdays saved."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                } else {
+                    birthdayList.forEach { entry ->
+                        BirthdayCard(
+                            entry = entry,
+                            isSelected = entry.id in selectedItems,
+                            onLongPress = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                selectedItems = selectedItems + entry.id
+                            },
+                            onClick = {
+                                if (selectedItems.isNotEmpty()) {
+                                    selectedItems = if (entry.id in selectedItems) {
+                                        selectedItems - entry.id
+                                    } else {
+                                        selectedItems + entry.id
                                     }
                                 }
-                            )
-                        }
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
 
@@ -401,6 +368,8 @@ fun DatabaseScreen(navController: NavController) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
+
+                Spacer(modifier = Modifier.height(80.dp)) // Extra space for padding bottom
             }
         }
     }
@@ -420,7 +389,6 @@ fun DatabaseScreen(navController: NavController) {
                         editingEntry = null
                         isLoading = false
                     }
-                    AlarmUtils.scheduleDailyAlarm(context)
                 }
             },
             onCancel = {
@@ -432,5 +400,132 @@ fun DatabaseScreen(navController: NavController) {
             coroutineScope = coroutineScope,
             setErrorMessage = { errorMessage = it }
         )
+    }
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun EnhancedSearchBarSection(
+    searchQuery: String,
+    onQueryChange: (String) -> Unit,
+    filterType: String?,
+    onFilterTypeChange: (String?) -> Unit,
+    sortOrder: String,
+    onSortOrderChange: (String) -> Unit
+) {
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // ✅ Card-style search bar (design upgrade)
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 16.dp)
+            ) {
+                Icon(Icons.Default.Search, contentDescription = "Search")
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        value = searchQuery,
+                        onValueChange = onQueryChange,
+                        placeholder = { Text("Search by Name") },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent
+                        ),
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { onQueryChange("") }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        // Chips Section
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 8.dp)
+        ) {
+            // All Chip
+            FilterChip(
+                selected = filterType == null,
+                onClick = { onFilterTypeChange(null) },
+                label = { Text("All") }
+            )
+
+            // Student Chip
+            FilterChip(
+                selected = filterType == "Student",
+                onClick = { onFilterTypeChange(if (filterType == "Student") null else "Student") },
+                label = { Text("Students") }
+            )
+
+            // Staff Chip
+            FilterChip(
+                selected = filterType == "Staff",
+                onClick = { onFilterTypeChange(if (filterType == "Staff") null else "Staff") },
+                label = { Text("Staff") }
+            )
+
+            // Sort By Chip anchored in Box
+            Box {
+                FilterChip(
+                    selected = sortMenuExpanded,
+                    onClick = { sortMenuExpanded = true },
+                    label = { Text("Sort: $sortOrder") },
+                    trailingIcon = {
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Sort Options")
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                )
+
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Old First") },
+                        onClick = {
+                            onSortOrderChange("Old First")
+                            sortMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("New Fisrt") },
+                        onClick = {
+                            onSortOrderChange("New First")
+                            sortMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
     }
 }
