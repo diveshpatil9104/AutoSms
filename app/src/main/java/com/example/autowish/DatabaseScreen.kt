@@ -5,18 +5,18 @@ import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -25,11 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,8 +42,9 @@ import java.io.File
 fun DatabaseScreen(navController: NavController) {
     val context = LocalContext.current
     val db = BirthdayDatabase.getInstance(context)
+    var isSelectionMode by remember { mutableStateOf(false) }
     var birthdayList by remember { mutableStateOf<List<BirthdayEntry>>(emptyList()) }
-    var selectedItems by remember { mutableStateOf(setOf<Int>()) }
+    var selectedItems by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var searchQuery by remember { mutableStateOf("") }
     var filterType by remember { mutableStateOf<String?>(null) }
     var sortOrder by remember { mutableStateOf("Old First") }
@@ -52,84 +53,84 @@ fun DatabaseScreen(navController: NavController) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var hasData by remember { mutableStateOf(false) }
-    val hapticFeedback = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
 
+    // Load birthdays
     LaunchedEffect(searchQuery, filterType, sortOrder) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                // Fetch filtered entries
-                var list = when (filterType) {
+                val list = when (filterType) {
                     null -> db.birthdayDao().getAll()
                     "Student" -> db.birthdayDao().getByPersonType("Student")
                     "Staff" -> db.birthdayDao().getByPersonType("Staff")
                     else -> db.birthdayDao().getAll()
                 }
-                Log.d("DatabaseScreen", "FilterType: $filterType, Initial list size: ${list.size}")
+                Log.d("DatabaseScreen", "Filter: $filterType, Initial size: ${list.size}")
 
-                // Apply search query
-                if (searchQuery.isNotEmpty()) {
-                    list = list.filter { it.name.contains(searchQuery, ignoreCase = true) }
-                    Log.d("DatabaseScreen", "After search '$searchQuery', list size: ${list.size}")
+                val filteredList = if (searchQuery.isNotEmpty()) {
+                    list.filter { it.name.contains(searchQuery, ignoreCase = true) }
+                } else {
+                    list
                 }
+                Log.d("DatabaseScreen", "Search '$searchQuery', Size: ${filteredList.size}")
 
-                // Apply sort order on the filtered list
-                list = when (sortOrder) {
-                    "Old First" -> list.sortedBy { it.birthDate }
-                    "New First" -> list.sortedByDescending { it.birthDate }
-                    else -> list
+                val sortedList = when (sortOrder) {
+                    "Old First" -> filteredList.sortedBy { it.birthDate }
+                    "New First" -> filteredList.sortedByDescending { it.birthDate }
+                    else -> filteredList
                 }
-                Log.d("DatabaseScreen", "After sort '$sortOrder', list size: ${list.size}")
+                Log.d("DatabaseScreen", "Sort '$sortOrder', Size: ${sortedList.size}")
 
                 withContext(Dispatchers.Main) {
-                    birthdayList = list
-                    hasData = list.isNotEmpty()
+                    birthdayList = sortedList
+                    hasData = sortedList.isNotEmpty()
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     errorMessage = "Failed to load data: ${e.message}"
-                    Log.e("DatabaseScreen", "Error loading data", e)
+                    Log.e("DatabaseScreen", "Load error", e)
                 }
             }
         }
     }
 
+    // CSV import
     val importCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
+        uri?.let {
             isLoading = true
             errorMessage = null
             coroutineScope.launch(Dispatchers.IO) {
                 try {
                     db.birthdayDao().deleteAll()
-                    val entries = parseCsv(context, uri)
-                    entries.forEach { db.birthdayDao().insert(it) }
+                    val entries = parseCsv(context, it)
+                    entries.forEach { entry -> db.birthdayDao().insert(entry) }
                     val newList = db.birthdayDao().getAll()
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
-                        showNotification(context, "CSV Imported", "${entries.size} birthdays imported!")
+                        showNotification(context, "CSV Imported", "${entries.size} birthdays imported")
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         errorMessage = "Failed to import CSV: ${e.message}"
+                        Log.e("DatabaseScreen", "Import error", e)
                     }
                 } finally {
-                    withContext(Dispatchers.Main) {
-                        isLoading = false
-                    }
+                    withContext(Dispatchers.Main) { isLoading = false }
                 }
             }
         }
     }
 
+    // CSV merge
     val mergeCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
+        uri?.let {
             isLoading = true
             errorMessage = null
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val entries = parseCsv(context, uri)
+                    val entries = parseCsv(context, it)
                     var insertedCount = 0
                     entries.forEach { entry ->
                         val existing = db.birthdayDao().getByNameAndPhone(entry.name, entry.phoneNumber)
@@ -142,17 +143,16 @@ fun DatabaseScreen(navController: NavController) {
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
-                        showNotification(context, "CSV Merged", "$insertedCount birthdays merged!")
+                        showNotification(context, "CSV Merged", "$insertedCount birthdays merged")
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         errorMessage = "Failed to merge CSV: ${e.message}"
+                        Log.e("DatabaseScreen", "Merge error", e)
                     }
                 } finally {
-                    withContext(Dispatchers.Main) {
-                        isLoading = false
-                    }
+                    withContext(Dispatchers.Main) { isLoading = false }
                 }
             }
         }
@@ -162,10 +162,10 @@ fun DatabaseScreen(navController: NavController) {
         topBar = {
             if (selectedItems.isEmpty()) {
                 TopAppBar(
-                    title = { Text("Database") },
+                    title = { Text("Database", style = MaterialTheme.typography.titleLarge) },
                     actions = {
                         IconButton(onClick = { showForm = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add")
+                            Icon(Icons.Default.Add, contentDescription = "Add Entry")
                         }
                         var showMenu by remember { mutableStateOf(false) }
                         IconButton(onClick = { showMenu = true }) {
@@ -188,91 +188,124 @@ fun DatabaseScreen(navController: NavController) {
                                     showMenu = false
                                     mergeCsvPicker.launch("text/*")
                                 },
-                                enabled = true
+                                enabled = hasData
                             )
                             DropdownMenuItem(
                                 text = { Text("Export CSV") },
                                 onClick = {
                                     showMenu = false
                                     coroutineScope.launch(Dispatchers.IO) {
-                                        val entries = db.birthdayDao().getAll()
-                                        if (entries.isEmpty()) {
+                                        try {
+                                            val entries = db.birthdayDao().getAll()
+                                            if (entries.isEmpty()) {
+                                                withContext(Dispatchers.Main) {
+                                                    showNotification(context, "Export Failed", "No data to export")
+                                                }
+                                                return@launch
+                                            }
+                                            val csvContent = buildString {
+                                                appendLine("name,phoneNumber,birthDate,personType")
+                                                entries.forEach { entry ->
+                                                    appendLine("${entry.name},${entry.phoneNumber},${entry.birthDate},${entry.personType}")
+                                                }
+                                            }
+                                            val file = File(context.getExternalFilesDir(null), "birthdays_export_${System.currentTimeMillis()}.csv")
+                                            file.writeText(csvContent)
                                             withContext(Dispatchers.Main) {
-                                                showNotification(context, "Export Failed", "No data to export")
+                                                showNotification(context, "CSV Exported", "Saved to ${file.absolutePath}")
                                             }
-                                            return@launch
-                                        }
-                                        val csvContent = buildString {
-                                            appendLine("name,phoneNumber,birthDate,personType")
-                                            entries.forEach {
-                                                appendLine("${it.name},${it.phoneNumber},${it.birthDate},${it.personType}")
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                errorMessage = "Failed to export CSV: ${e.message}"
+                                                Log.e("DatabaseScreen", "Export error", e)
                                             }
-                                        }
-                                        val file = File(context.getExternalFilesDir(null), "birthdays_export_${System.currentTimeMillis()}.csv")
-                                        file.writeText(csvContent)
-                                        withContext(Dispatchers.Main) {
-                                            showNotification(context, "CSV Exported", "Saved to ${file.absolutePath}")
                                         }
                                     }
                                 }
                             )
                         }
-                    }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    modifier = Modifier.background(Color.Transparent)
                 )
             } else {
                 TopAppBar(
-                    title = { Text("${selectedItems.size} selected") },
+                    title = { Text("${selectedItems.size} selected", style = MaterialTheme.typography.titleLarge) },
                     navigationIcon = {
-                        IconButton(onClick = { selectedItems = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel")
+                        IconButton(onClick = {
+                            selectedItems = emptySet()
+                            isSelectionMode = false
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel Selection")
                         }
                     },
                     actions = {
                         IconButton(onClick = {
                             coroutineScope.launch(Dispatchers.IO) {
-                                selectedItems.forEach { id ->
-                                    db.birthdayDao().deleteById(id)
+                                try {
+                                    selectedItems.forEach { id -> db.birthdayDao().deleteById(id) }
+                                    val newList = db.birthdayDao().getAll()
+                                    withContext(Dispatchers.Main) {
+                                        birthdayList = newList
+                                        hasData = newList.isNotEmpty()
+                                        showNotification(context, "Entries Deleted", "${selectedItems.size} entries deleted")
+                                        selectedItems = emptySet()
+                                        isSelectionMode = false
+                                    }
+                                    AlarmUtils.scheduleDailyAlarm(context)
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        errorMessage = "Failed to delete entries: ${e.message}"
+                                        Log.e("DatabaseScreen", "Delete error", e)
+                                    }
                                 }
-                                val newList = db.birthdayDao().getAll()
-                                withContext(Dispatchers.Main) {
-                                    birthdayList = newList
-                                    hasData = newList.isNotEmpty()
-                                    showNotification(context, "Entries Deleted", "${selectedItems.size} entries deleted")
-                                    selectedItems = emptySet()
-                                }
-                                AlarmUtils.scheduleDailyAlarm(context)
                             }
                         }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete")
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Selected")
                         }
                         if (selectedItems.size == 1) {
                             IconButton(onClick = {
                                 val selectedId = selectedItems.first()
-                                Log.d("DatabaseScreen", "Edit clicked for ID: $selectedId")
                                 coroutineScope.launch(Dispatchers.IO) {
-                                    val entry = db.birthdayDao().getAll().find { it.id == selectedId }
-                                    withContext(Dispatchers.Main) {
-                                        editingEntry = entry
-                                        if (entry != null) {
-                                            showForm = true
-                                            Log.d("DatabaseScreen", "Form opened for entry: ${entry.name}")
-                                        } else {
-                                            Log.e("DatabaseScreen", "No entry found for ID: $selectedId")
-                                            errorMessage = "Entry not found"
+                                    try {
+                                        val entry = db.birthdayDao().getAll().find { it.id == selectedId }
+                                        withContext(Dispatchers.Main) {
+                                            editingEntry = entry
+                                            if (entry != null) {
+                                                showForm = true
+                                                Log.d("DatabaseScreen", "Editing entry: ${entry.name}")
+                                            } else {
+                                                errorMessage = "Entry not found"
+                                                Log.e("DatabaseScreen", "No entry for ID: $selectedId")
+                                            }
+                                            selectedItems = emptySet()
+                                            isSelectionMode = false
                                         }
-                                        selectedItems = emptySet()
+                                    } catch (e: Exception) {
+                                        withContext(Dispatchers.Main) {
+                                            errorMessage = "Failed to load entry: ${e.message}"
+                                            Log.e("DatabaseScreen", "Edit load error", e)
+                                        }
                                     }
                                 }
                             }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit")
+                                Icon(Icons.Default.Edit, contentDescription = "Edit Selected")
                             }
                         }
-                    }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    modifier = Modifier.background(Color.Transparent)
                 )
             }
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home") },
@@ -286,7 +319,9 @@ fun DatabaseScreen(navController: NavController) {
                     onClick = { navController.navigate("database") }
                 )
             }
-        }
+        },
+        containerColor = Color.Transparent,
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
     ) { innerPadding ->
         Surface(
             modifier = Modifier
@@ -301,75 +336,94 @@ fun DatabaseScreen(navController: NavController) {
                     )
                 )
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState()) // ← Enables full scroll
-            ) {
-                EnhancedSearchBarSection(
-                    searchQuery = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    filterType = filterType,
-                    onFilterTypeChange = { filterType = it },
-                    sortOrder = sortOrder,
-                    onSortOrderChange = { sortOrder = it }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (birthdayList.isEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 32.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = when {
-                                filterType == "Student" -> "No students in the database."
-                                filterType == "Staff" -> "No staff in the database."
-                                searchQuery.isNotEmpty() -> "No matching birthdays."
-                                else -> "No birthdays saved."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        EnhancedSearchBarSection(
+                            searchQuery = searchQuery,
+                            onQueryChange = { searchQuery = it },
+                            filterType = filterType,
+                            onFilterTypeChange = { filterType = it },
+                            sortOrder = sortOrder,
+                            onSortOrderChange = { sortOrder = it }
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
-                } else {
-                    birthdayList.forEach { entry ->
-                        BirthdayCard(
-                            entry = entry,
-                            isSelected = entry.id in selectedItems,
-                            onLongPress = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                selectedItems = selectedItems + entry.id
-                            },
-                            onClick = {
-                                if (selectedItems.isNotEmpty()) {
-                                    selectedItems = if (entry.id in selectedItems) {
-                                        selectedItems - entry.id
-                                    } else {
-                                        selectedItems + entry.id
+
+                    if (birthdayList.isEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 32.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = when {
+                                        filterType == "Student" -> "No students in the database."
+                                        filterType == "Staff" -> "No staff in the database."
+                                        searchQuery.isNotEmpty() -> "No matching birthdays."
+                                        else -> "No birthdays saved."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    } else {
+                        items(birthdayList, key = { it.id }) { entry ->
+                            BirthdayListItem(
+                                entry = entry,
+                                isSelected = entry.id in selectedItems,
+                                isSelectionMode = isSelectionMode,
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        selectedItems = if (entry.id in selectedItems) {
+                                            selectedItems - entry.id
+                                        } else {
+                                            selectedItems + entry.id
+                                        }
+                                        if (selectedItems.isEmpty()) {
+                                            isSelectionMode = false
+                                        }
+                                        Log.d("DatabaseScreen", "Click on ${entry.name}, Selected: $selectedItems")
+                                    }
+                                },
+                                onLongPress = {
+                                    if (!isSelectionMode) {
+                                        isSelectionMode = true
+                                        selectedItems = selectedItems + entry.id
+                                        Log.d("DatabaseScreen", "Long press on ${entry.name}, Selection mode: $isSelectionMode")
                                     }
                                 }
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
+                            )
+                        }
                     }
-                }
 
-                errorMessage?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+                    errorMessage?.let {
+                        item {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
 
-                Spacer(modifier = Modifier.height(80.dp)) // Extra space for padding bottom
+                    item { Spacer(modifier = Modifier.height(80.dp)) }
+                }
             }
         }
     }
@@ -379,21 +433,38 @@ fun DatabaseScreen(navController: NavController) {
             onSave = { entry ->
                 isLoading = true
                 coroutineScope.launch(Dispatchers.IO) {
-                    db.birthdayDao().insert(entry)
-                    val newList = db.birthdayDao().getAll()
-                    withContext(Dispatchers.Main) {
-                        birthdayList = newList
-                        hasData = newList.isNotEmpty()
-                        showNotification(context, "Birthday Saved", "Birthday for ${entry.name} ${if (editingEntry != null) "updated" else "saved"}!")
-                        showForm = false
-                        editingEntry = null
-                        isLoading = false
+                    try {
+                        db.birthdayDao().insert(entry)
+                        val newList = db.birthdayDao().getAll()
+                        withContext(Dispatchers.Main) {
+                            birthdayList = newList
+                            hasData = newList.isNotEmpty()
+                            showNotification(
+                                context,
+                                "Birthday Saved",
+                                "Birthday for ${entry.name} ${if (editingEntry != null) "updated" else "saved"}"
+                            )
+                            showForm = false
+                            editingEntry = null
+                            selectedItems = emptySet()
+                            isSelectionMode = false
+                        }
+                        AlarmUtils.scheduleDailyAlarm(context)
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) {
+                            errorMessage = "Failed to save birthday: ${e.message}"
+                            Log.e("DatabaseScreen", "Save error", e)
+                        }
+                    } finally {
+                        withContext(Dispatchers.Main) { isLoading = false }
                     }
                 }
             },
             onCancel = {
                 showForm = false
                 editingEntry = null
+                selectedItems = emptySet()
+                isSelectionMode = false
             },
             initialEntry = editingEntry,
             database = db,
@@ -402,8 +473,90 @@ fun DatabaseScreen(navController: NavController) {
         )
     }
 }
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun BirthdayListItem(
+    entry: BirthdayEntry,
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
 
-
+    Column {
+        ListItem(
+            headlineContent = {
+                Text(
+                    text = entry.name,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 18.sp
+                    ),
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.primary
+                )
+            },
+            supportingContent = {
+                Column {
+                    Text(
+                        text = entry.phoneNumber,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Text(
+                        text = "Birthday: ${entry.birthDate}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Text(
+                        text = "Type: ${entry.personType}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+            },
+            leadingContent = if (isSelected) {
+                {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            } else null,
+            colors = ListItemDefaults.colors(
+                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surface,
+                headlineColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.primary,
+                supportingColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = LocalIndication.current, // ✅ new ripple API
+                    onClick = {
+                        if (isSelectionMode) onClick()
+                    },
+                    onLongClick = {
+                        if (!isSelectionMode) onLongPress()
+                    }
+                )
+        )
+        Divider(
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            thickness = 1.dp,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+    }
+}
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EnhancedSearchBarSection(
