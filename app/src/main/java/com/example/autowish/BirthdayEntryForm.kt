@@ -5,6 +5,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
@@ -26,16 +27,32 @@ fun BirthdayEntryForm(
     var phone by remember { mutableStateOf(initialEntry?.phoneNumber ?: "") }
     var birthDate by remember { mutableStateOf<LocalDate?>(parseInitialBirthDate(initialEntry?.birthDate)) }
     var personType by remember { mutableStateOf(initialEntry?.personType ?: "Student") }
+    var department by remember { mutableStateOf(initialEntry?.department ?: "Computer") }
+    var year by remember { mutableStateOf(initialEntry?.year ?: "2nd") }
+    var groupId by remember { mutableStateOf(initialEntry?.groupId ?: "") }
+    var isHod by remember { mutableStateOf(initialEntry?.isHod ?: false) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var phoneError by remember { mutableStateOf<String?>(null) }
     var birthDateError by remember { mutableStateOf<String?>(null) }
+    var groupIdError by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
 
+    val departments = listOf(
+        "Computer",
+        "ENTC",
+        "Civil",
+        "Mechanical",
+        "Electronics",
+        "Electronics & Comp"
+    )
+
+    val years = listOf("2nd", "3rd", "4th")
+
     val formatter = DateTimeFormatter.ofPattern("MM-dd")
 
-    LaunchedEffect(name, phone, birthDate, personType) {
+    LaunchedEffect(name, phone, birthDate, personType, department, year, groupId, isHod) {
         setErrorMessage(null)
         errorMessage = null
     }
@@ -89,7 +106,7 @@ fun BirthdayEntryForm(
                     value = phone,
                     onValueChange = {
                         phone = it
-                        phoneError = if (!it.matches(Regex("\\d{10}"))) "Phone number must be 10 digits" else null
+                        phoneError = if (!it.matches(Regex("\\d{10,25}"))) "Phone number must be 10-25 digits" else null
                     },
                     label = { Text("Phone Number") },
                     modifier = Modifier.fillMaxWidth(),
@@ -125,10 +142,10 @@ fun BirthdayEntryForm(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                var expanded by remember { mutableStateOf(false) }
+                var personTypeExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = !expanded }
+                    expanded = personTypeExpanded,
+                    onExpandedChange = { personTypeExpanded = !personTypeExpanded }
                 ) {
                     OutlinedTextField(
                         value = personType,
@@ -136,30 +153,137 @@ fun BirthdayEntryForm(
                         label = { Text("Person Type") },
                         readOnly = true,
                         modifier = Modifier
-                            .menuAnchor() // 🔥 THIS IS THE FIX
+                            .menuAnchor()
                             .fillMaxWidth(),
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = personTypeExpanded)
                         }
                     )
                     ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
+                        expanded = personTypeExpanded,
+                        onDismissRequest = { personTypeExpanded = false }
                     ) {
                         DropdownMenuItem(
                             text = { Text("Student") },
                             onClick = {
                                 personType = "Student"
-                                expanded = false
+                                isHod = false
+                                personTypeExpanded = false
                             }
                         )
                         DropdownMenuItem(
                             text = { Text("Staff") },
                             onClick = {
                                 personType = "Staff"
-                                expanded = false
+                                year = "2nd" // Reset to default for students if switching back
+                                personTypeExpanded = false
                             }
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                var departmentExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = departmentExpanded,
+                    onExpandedChange = { departmentExpanded = !departmentExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = department,
+                        onValueChange = {},
+                        label = { Text("Department") },
+                        readOnly = true,
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth(),
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded)
+                        }
+                    )
+                    ExposedDropdownMenu(
+                        expanded = departmentExpanded,
+                        onDismissRequest = { departmentExpanded = false }
+                    ) {
+                        departments.forEach { dept ->
+                            DropdownMenuItem(
+                                text = { Text(dept) },
+                                onClick = {
+                                    department = dept
+                                    departmentExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (personType == "Student") {
+                    var yearExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = yearExpanded,
+                        onExpandedChange = { yearExpanded = !yearExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = year,
+                            onValueChange = {},
+                            label = { Text("Year") },
+                            readOnly = true,
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth(),
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearExpanded)
+                            }
+                        )
+                        ExposedDropdownMenu(
+                            expanded = yearExpanded,
+                            onDismissRequest = { yearExpanded = false }
+                        ) {
+                            years.forEach { yr ->
+                                DropdownMenuItem(
+                                    text = { Text(yr) },
+                                    onClick = {
+                                        year = yr
+                                        yearExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                OutlinedTextField(
+                    value = groupId,
+                    onValueChange = {
+                        groupId = it
+                        groupIdError = if (it.isBlank()) "Group ID cannot be empty" else null
+                    },
+                    label = { Text("Group ID") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = groupIdError != null,
+                    supportingText = {
+                        groupIdError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (personType == "Staff") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = isHod,
+                            onCheckedChange = { isHod = it }
+                        )
+                        Text("Is HOD", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -168,16 +292,27 @@ fun BirthdayEntryForm(
             TextButton(
                 onClick = {
                     nameError = if (name.isBlank()) "Name cannot be empty" else null
-                    phoneError = if (!phone.matches(Regex("\\d{10}"))) "Phone number must be 10 digits" else null
+                    phoneError = if (!phone.matches(Regex("\\d{10,25}"))) "Phone number must be 10-25 digits" else null
                     birthDateError = validateBirthDate(birthDate)
+                    groupIdError = if (groupId.isBlank()) "Group ID cannot be empty" else null
 
                     if (personType !in listOf("Student", "Staff")) {
                         setErrorMessage("Select a valid person type")
                         errorMessage = "Select a valid person type"
                         return@TextButton
                     }
+                    if (department !in departments) {
+                        setErrorMessage("Select a valid department")
+                        errorMessage = "Select a valid department"
+                        return@TextButton
+                    }
+                    if (personType == "Student" && year !in years) {
+                        setErrorMessage("Select a valid year")
+                        errorMessage = "Select a valid year"
+                        return@TextButton
+                    }
 
-                    if (nameError != null || phoneError != null || birthDateError != null) return@TextButton
+                    if (nameError != null || phoneError != null || birthDateError != null || groupIdError != null) return@TextButton
 
                     isLoading = true
                     coroutineScope.launch(Dispatchers.IO) {
@@ -198,7 +333,11 @@ fun BirthdayEntryForm(
                             name = name,
                             phoneNumber = phone,
                             birthDate = birthDate!!.format(formatter),
-                            personType = personType
+                            personType = personType,
+                            department = department,
+                            year = if (personType == "Student") year else null, // Ensure null for staff
+                            groupId = groupId,
+                            isHod = if (personType == "Staff") isHod else false
                         )
                         onSave(entry)
                         withContext(Dispatchers.Main) {
@@ -230,7 +369,11 @@ fun BirthdayEntryForm(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { millis ->
                             val selected = LocalDate.ofEpochDay(millis / (1000 * 60 * 60 * 24))
-                            birthDate = LocalDate.of(2000, selected.monthValue, selected.dayOfMonth)
+                            if (selected.year > 1900) {
+                                birthDate = LocalDate.of(2000, selected.monthValue, selected.dayOfMonth)
+                            } else {
+                                birthDateError = "Year must be after 1900"
+                            }
                         }
                         showDatePicker = false
                     }

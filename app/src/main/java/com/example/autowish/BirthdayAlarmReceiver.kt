@@ -31,24 +31,53 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
 
         val db = BirthdayDatabase.getInstance(context)
         CoroutineScope(Dispatchers.IO).launch {
-            val list = db.birthdayDao().getBirthdaysByDate(today)
-            Log.d(TAG, "Found ${list.size} birthdays for $today")
-            if (list.isEmpty()) {
-                Log.d(TAG, "No birthdays found for $today")
-            }
-            list.forEach {
-                Log.d(TAG, "Sending SMS to ${it.phoneNumber} for ${it.name}")
-                sendSMS(context, it.phoneNumber, it.name, it.personType)
-            }
+            try {
+                val list = db.birthdayDao().getBirthdaysByDate(today)
+                Log.d(TAG, "Found ${list.size} birthdays for $today")
+                if (list.isEmpty()) {
+                    Log.d(TAG, "No birthdays found for $today")
+                }
 
-            if (!TEST_MODE && list.isNotEmpty()) {
-                prefs.edit().putString(PREF_SENT_DATE, today).apply()
-                Log.d(TAG, "Updated SharedPreferences: lastSentDate = $today")
-            }
+                // Process each birthday sequentially
+                list.forEach { birthday ->
+                    // Direct message
+                    Log.d(TAG, "Sending direct SMS to ${birthday.phoneNumber} for ${birthday.name}")
+                    sendSMS(context, birthday.phoneNumber, birthday.name, birthday.personType)
 
-            AlarmUtils.cancelAlarm(context)
-            AlarmUtils.scheduleDailyAlarm(context)
-            Log.d(TAG, "Alarm rescheduled for next midnight")
+                    // Peer group messages
+                    val peers = db.birthdayDao().getPeers(
+                        department = birthday.department,
+                        year = birthday.year,
+                        groupId = birthday.groupId,
+                        excludeId = birthday.id
+                    ).shuffled().take(5)
+                    peers.forEach { peer ->
+                        Log.d(TAG, "Sending peer SMS to ${peer.phoneNumber} for ${birthday.name}")
+                        sendPeerSMS(context, peer.phoneNumber, birthday.name, birthday.personType)
+                        delay(500) // 500ms delay between peer messages
+                    }
+
+                    // HOD notification (for staff birthdays only)
+                    if (birthday.personType == "Staff") {
+                        val hods = db.birthdayDao().getHodByDepartment(birthday.department)
+                        hods.forEach { hod ->
+                            Log.d(TAG, "Sending HOD SMS to ${hod.phoneNumber} for ${birthday.name}")
+                            sendHodSMS(context, hod.phoneNumber, birthday.name)
+                        }
+                    }
+                }
+
+                if (!TEST_MODE && list.isNotEmpty()) {
+                    prefs.edit().putString(PREF_SENT_DATE, today).apply()
+                    Log.d(TAG, "Updated SharedPreferences: lastSentDate = $today")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing birthdays: ${e.message}")
+            } finally {
+                AlarmUtils.cancelAlarm(context)
+                AlarmUtils.scheduleDailyAlarm(context)
+                Log.d(TAG, "Alarm rescheduled for next midnight")
+            }
         }
     }
 }

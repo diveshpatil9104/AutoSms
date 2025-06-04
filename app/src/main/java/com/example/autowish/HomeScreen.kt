@@ -12,7 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,6 +37,7 @@ import java.util.*
 fun HomeScreen(navController: NavController) {
     val context = LocalContext.current
     val db = BirthdayDatabase.getInstance(context)
+    var todayBirthdays by remember { mutableStateOf<List<BirthdayEntry>>(emptyList()) }
     var upcomingBirthdays by remember { mutableStateOf<List<BirthdayEntry>>(emptyList()) }
     var hasData by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
@@ -44,38 +45,61 @@ fun HomeScreen(navController: NavController) {
     var showForm by remember { mutableStateOf(false) }
     var showCsvDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() } // Added for Snackbar
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // Function to update upcoming birthdays
-    suspend fun updateUpcomingBirthdays() {
+    // Date formatter for MM-dd
+    val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
+    val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
+    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+    // Function to update birthdays
+    suspend fun updateBirthdays() {
         try {
+            val today = Calendar.getInstance()
+            val currentYear = yearFormat.format(today.time).toInt()
+            val todayMMdd = dateFormat.format(today.time)
+            val sevenDaysLater = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, 7) }
+            val sevenDaysTime = sevenDaysLater.timeInMillis
+
             val allBirthdays = db.birthdayDao().getAll()
             hasData = allBirthdays.isNotEmpty()
-            val today = Calendar.getInstance()
-            val newUpcomingBirthdays = allBirthdays
+
+            // Upcoming birthdays (next 7 days, excluding today)
+            val upcomingList = allBirthdays
                 .mapNotNull { entry ->
-                    val parts = entry.birthDate.split("-")
-                    if (parts.size == 2) {
-                        val month = parts[0].toIntOrNull()
-                        val day = parts[1].toIntOrNull()
-                        if (month != null && day != null) {
-                            val nextBirthday = Calendar.getInstance().apply {
-                                set(Calendar.MONTH, month - 1)
-                                set(Calendar.DAY_OF_MONTH, day)
-                                set(Calendar.YEAR, today.get(Calendar.YEAR))
-                                if (before(today)) {
-                                    add(Calendar.YEAR, 1)
+                    try {
+                        // Parse birth date as MM-dd
+                        val parts = entry.birthDate.split("-")
+                        if (parts.size == 2) {
+                            val month = parts[0].toIntOrNull()
+                            val day = parts[1].toIntOrNull()
+                            if (month != null && day != null) {
+                                val nextBirthday = Calendar.getInstance().apply {
+                                    set(Calendar.MONTH, month - 1)
+                                    set(Calendar.DAY_OF_MONTH, day)
+                                    set(Calendar.YEAR, currentYear)
+                                    // If the birthday is today or has passed, use next year
+                                    if (timeInMillis <= today.timeInMillis) {
+                                        add(Calendar.YEAR, 1)
+                                    }
                                 }
-                            }
-                            entry to nextBirthday.timeInMillis
+                                Pair(entry, nextBirthday.timeInMillis)
+                            } else null
                         } else null
-                    } else null
+                    } catch (e: Exception) {
+                        null // Skip invalid dates
+                    }
+                }
+                .filter { (_, birthTime) ->
+                    // Include birthdays from tomorrow to 7 days later
+                    birthTime > today.timeInMillis && birthTime <= sevenDaysTime
                 }
                 .sortedBy { it.second }
-                .take(7)
                 .map { it.first }
+                .take(7)
+
             withContext(Dispatchers.Main) {
-                upcomingBirthdays = newUpcomingBirthdays
+                upcomingBirthdays = upcomingList
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
@@ -86,10 +110,11 @@ fun HomeScreen(navController: NavController) {
 
     LaunchedEffect(Unit) {
         coroutineScope.launch(Dispatchers.IO) {
-            updateUpcomingBirthdays()
+            updateBirthdays()
         }
     }
 
+    // CSV import
     val importCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             isLoading = true
@@ -99,7 +124,7 @@ fun HomeScreen(navController: NavController) {
                     db.birthdayDao().deleteAll()
                     val entries = parseCsv(context, uri)
                     entries.forEach { db.birthdayDao().insert(it) }
-                    updateUpcomingBirthdays()
+                    updateBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
                         coroutineScope.launch {
@@ -119,6 +144,7 @@ fun HomeScreen(navController: NavController) {
         }
     }
 
+    // CSV merge
     val mergeCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
             isLoading = true
@@ -134,7 +160,7 @@ fun HomeScreen(navController: NavController) {
                             insertedCount++
                         }
                     }
-                    updateUpcomingBirthdays()
+                    updateBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
                         coroutineScope.launch {
@@ -182,7 +208,7 @@ fun HomeScreen(navController: NavController) {
                 isHomeSelected = true
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }, // Added SnackbarHost
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = Color.Transparent
     ) { innerPadding ->
         Surface(
@@ -214,7 +240,7 @@ fun HomeScreen(navController: NavController) {
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         modifier = Modifier
                             .padding(bottom = 18.dp)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
                     )
                 }
                 item {
@@ -279,6 +305,50 @@ fun HomeScreen(navController: NavController) {
                     )
                 }
                 item {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Today's Birthdays",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 20.sp
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = if (todayBirthdays.isEmpty()) {
+                                    "No birthdays today"
+                                } else {
+                                    "${todayBirthdays.size} birthday${if (todayBirthdays.size > 1) "s" else ""} today: ${todayBirthdays.joinToString { it.name }}"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+                item {
+                    Divider(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    )
+                }
+                item {
                     Text(
                         text = "Upcoming Birthdays",
                         style = MaterialTheme.typography.titleMedium.copy(
@@ -308,7 +378,7 @@ fun HomeScreen(navController: NavController) {
                         }
                     }
                 } else {
-                    items(upcomingBirthdays) { entry ->
+                    items(upcomingBirthdays, key = { it.id }) { entry ->
                         BirthdayCard(entry)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -324,6 +394,7 @@ fun HomeScreen(navController: NavController) {
                         )
                     }
                 }
+                item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
     }
@@ -332,7 +403,7 @@ fun HomeScreen(navController: NavController) {
         AlertDialog(
             onDismissRequest = { showCsvDialog = false },
             title = { Text("Upload CSV") },
-            text = { Text("Importing a new file will delete all existing entries. To keep existing entries and add new ones, select 'Merge CSV' instead.\"\n") },
+            text = { Text("Importing a new file will delete all existing entries. To keep existing entries and add new ones, select 'Merge CSV' instead.") },
             confirmButton = {
                 TextButton(onClick = {
                     showCsvDialog = false
@@ -361,7 +432,7 @@ fun HomeScreen(navController: NavController) {
                 isLoading = true
                 coroutineScope.launch(Dispatchers.IO) {
                     db.birthdayDao().insert(entry)
-                    updateUpcomingBirthdays()
+                    updateBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
                         coroutineScope.launch {

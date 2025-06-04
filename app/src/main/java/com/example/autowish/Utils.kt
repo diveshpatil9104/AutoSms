@@ -129,18 +129,29 @@ fun parseCsv(context: Context, uri: Uri): List<BirthdayEntry> {
     val entries = mutableListOf<BirthdayEntry>()
     context.contentResolver.openInputStream(uri)?.use { inputStream ->
         inputStream.bufferedReader().useLines { lines ->
-            lines.drop(1).forEach { line ->
-                val parts = line.split(",")
-                if (parts.size == 4) {
-                    entries.add(
-                        BirthdayEntry(
+            lines.drop(1).forEachIndexed { index, line ->
+                try {
+                    val parts = line.split(",").map { it.trim() }
+                    if (parts.size >= 4) {
+                        val entry = BirthdayEntry(
                             id = 0,
-                            name = parts[0].trim(),
-                            phoneNumber = parts[1].trim(),
-                            birthDate = parts[2].trim(),
-                            personType = parts[3].trim()
+                            name = parts[0],
+                            phoneNumber = parts[1],
+                            birthDate = parts[2],
+                            personType = parts[3],
+                            department = parts.getOrElse(4) { "Computer Engineering" },
+                            year = parts.getOrElse(5) { "" }.takeIf { it.isNotEmpty() && parts[3] == "Student" },
+                            groupId = parts.getOrElse(6) { "" },
+                            isHod = parts.getOrElse(7) { "false" }.toBoolean()
                         )
-                    )
+                        entries.add(entry)
+                    } else {
+                        // Log warning for malformed line
+                        android.util.Log.w("parseCsv", "Skipping malformed CSV line ${index + 2}: $line")
+                    }
+                } catch (e: Exception) {
+                    // Log error for invalid line
+                    android.util.Log.e("parseCsv", "Error parsing CSV line ${index + 2}: $line, Error: ${e.message}")
                 }
             }
         }

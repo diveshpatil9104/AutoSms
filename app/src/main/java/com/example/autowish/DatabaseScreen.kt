@@ -9,7 +9,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -27,7 +26,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +45,9 @@ fun DatabaseScreen(navController: NavController) {
     var birthdayList by remember { mutableStateOf<List<BirthdayEntry>>(emptyList()) }
     var selectedItems by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var searchQuery by remember { mutableStateOf("") }
-    var filterType by remember { mutableStateOf<String?>(null) }
+    var filterType by remember { mutableStateOf("Student") }
+    var department by remember { mutableStateOf("Computer") }
+    var year by remember { mutableStateOf("2nd") }
     var sortOrder by remember { mutableStateOf("Old First") }
     var showForm by remember { mutableStateOf(false) }
     var editingEntry by remember { mutableStateOf<BirthdayEntry?>(null) }
@@ -55,21 +55,28 @@ fun DatabaseScreen(navController: NavController) {
     var isLoading by remember { mutableStateOf(false) }
     var hasData by remember { mutableStateOf(false) }
     var showDeleteAllDialog by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
+    var showDeleteFilteredDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    val departments = listOf(
+        "Computer",
+        "ENTC",
+        "Civil",
+        "Mechanical",
+        "Electronics",
+        "Electronics & Comp"
+    )
+    val years = listOf("2nd", "3rd", "4th", "All")
+
     // Load birthdays
-    LaunchedEffect(searchQuery, filterType, sortOrder) {
+    LaunchedEffect(searchQuery, filterType, department, year, sortOrder) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val list = when (filterType) {
-                    null -> db.birthdayDao().getAll()
-                    "Student" -> db.birthdayDao().getByPersonType("Student")
-                    "Staff" -> db.birthdayDao().getByPersonType("Staff")
-                    else -> db.birthdayDao().getAll()
-                }
-                Log.d("DatabaseScreen", "Filter: $filterType, Initial size: ${list.size}")
+                val effectiveYear = if (filterType == "Student" && year != "All") year else null
+                val list = db.birthdayDao().getByDepartmentAndYear(department, effectiveYear, if (filterType == "All") null else filterType)
+                Log.d("DatabaseScreen", "Filter: $filterType, Dept: $department, Year: $effectiveYear, Initial size: ${list.size}")
 
                 val filteredList = if (searchQuery.isNotEmpty()) {
                     list.filter { it.name.contains(searchQuery, ignoreCase = true) }
@@ -98,7 +105,6 @@ fun DatabaseScreen(navController: NavController) {
         }
     }
 
-
     // CSV import
     val importCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let {
@@ -109,7 +115,7 @@ fun DatabaseScreen(navController: NavController) {
                     db.birthdayDao().deleteAll()
                     val entries = parseCsv(context, it)
                     entries.forEach { entry -> db.birthdayDao().insert(entry) }
-                    val newList = db.birthdayDao().getAll()
+                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
@@ -146,7 +152,7 @@ fun DatabaseScreen(navController: NavController) {
                             insertedCount++
                         }
                     }
-                    val newList = db.birthdayDao().getAll()
+                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
@@ -168,9 +174,7 @@ fun DatabaseScreen(navController: NavController) {
     }
 
     Scaffold(
-
         topBar = {
-
             if (selectedItems.isEmpty()) {
                 TopAppBar(
                     title = {
@@ -183,10 +187,15 @@ fun DatabaseScreen(navController: NavController) {
                             )
                         )
                     },
-
                     actions = {
                         IconButton(onClick = { showForm = true }) {
                             Icon(Icons.Default.Add, contentDescription = "Add Entry")
+                        }
+                        IconButton(
+                            onClick = { showDeleteFilteredDialog = true },
+                            enabled = hasData && (filterType != "All" || department != departments.first() || year != "All")
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Filtered")
                         }
                         var showMenu by remember { mutableStateOf(false) }
                         IconButton(onClick = { showMenu = true }) {
@@ -225,9 +234,9 @@ fun DatabaseScreen(navController: NavController) {
                                                 return@launch
                                             }
                                             val csvContent = buildString {
-                                                appendLine("name,phoneNumber,birthDate,personType")
+                                                appendLine("name,phoneNumber,birthDate,personType,department,year,groupId,isHod")
                                                 entries.forEach { entry ->
-                                                    appendLine("${entry.name},${entry.phoneNumber},${entry.birthDate},${entry.personType}")
+                                                    appendLine("${entry.name},${entry.phoneNumber},${entry.birthDate},${entry.personType},${entry.department},${entry.year ?: ""},${entry.groupId},${entry.isHod}")
                                                 }
                                             }
                                             val file = File(context.getExternalFilesDir(null), "birthdays_export_${System.currentTimeMillis()}.csv")
@@ -286,7 +295,7 @@ fun DatabaseScreen(navController: NavController) {
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
                                     selectedItems.forEach { id -> db.birthdayDao().deleteById(id) }
-                                    val newList = db.birthdayDao().getAll()
+                                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                                     withContext(Dispatchers.Main) {
                                         birthdayList = newList
                                         hasData = newList.isNotEmpty()
@@ -348,12 +357,11 @@ fun DatabaseScreen(navController: NavController) {
         bottomBar = {
             BottomNavigationBar(
                 navController = navController,
-                isHomeSelected =false
+                isHomeSelected = false
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        containerColor = Color.Transparent,
-        modifier = Modifier
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Surface(
             modifier = Modifier
@@ -385,6 +393,10 @@ fun DatabaseScreen(navController: NavController) {
                             onQueryChange = { searchQuery = it },
                             filterType = filterType,
                             onFilterTypeChange = { filterType = it },
+                            department = department,
+                            onDepartmentChange = { department = it },
+                            year = year,
+                            onYearChange = { year = it },
                             sortOrder = sortOrder,
                             onSortOrderChange = { sortOrder = it }
                         )
@@ -402,10 +414,10 @@ fun DatabaseScreen(navController: NavController) {
                             ) {
                                 Text(
                                     text = when {
-                                        filterType == "Student" -> "No students in the database."
-                                        filterType == "Staff" -> "No staff in the database."
                                         searchQuery.isNotEmpty() -> "No matching birthdays."
-                                        else -> "No birthdays saved."
+                                        filterType == "Student" -> "No students in $department${if (year != "All") " ($year)" else ""}."
+                                        filterType == "Staff" -> "No staff in $department."
+                                        else -> "No birthdays in $department${if (year != "All") " ($year)" else ""}."
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -474,7 +486,7 @@ fun DatabaseScreen(navController: NavController) {
                         coroutineScope.launch(Dispatchers.IO) {
                             try {
                                 db.birthdayDao().deleteAll()
-                                val newList = db.birthdayDao().getAll()
+                                val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                                 withContext(Dispatchers.Main) {
                                     birthdayList = newList
                                     hasData = newList.isNotEmpty()
@@ -509,6 +521,63 @@ fun DatabaseScreen(navController: NavController) {
         )
     }
 
+    // Confirmation dialog for Delete Filtered
+    if (showDeleteFilteredDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteFilteredDialog = false },
+            title = { Text("Delete Filtered Entries") },
+            text = {
+                Text(
+                    "Are you sure you want to delete all ${filterType?.lowercase() ?: "entries"} in $department${if (filterType == "Student" && year != "All") " ($year)" else ""}? This action cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteFilteredDialog = false
+                        isLoading = true
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                db.birthdayDao().deleteByDepartmentAndYear(
+                                    department,
+                                    if (filterType == "Student" && year != "All") year else null,
+                                    if (filterType == "All") null else filterType
+                                )
+                                val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                                withContext(Dispatchers.Main) {
+                                    birthdayList = newList
+                                    hasData = newList.isNotEmpty()
+                                    coroutineScope.launch {
+                                        snackbarHostState.showSnackbar("Filtered entries deleted")
+                                    }
+                                    isSelectionMode = false
+                                    selectedItems = emptySet()
+                                }
+                                AlarmUtils.scheduleDailyAlarm(context)
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) {
+                                    errorMessage = "Failed to delete filtered entries: ${e.message}"
+                                    Log.e("DatabaseScreen", "Delete filtered error", e)
+                                }
+                            } finally {
+                                withContext(Dispatchers.Main) {
+                                    isLoading = false
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Yes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteFilteredDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
@@ -527,6 +596,7 @@ fun DatabaseScreen(navController: NavController) {
             }
         )
     }
+
     if (showForm) {
         BirthdayEntryForm(
             onSave = { entry ->
@@ -534,7 +604,7 @@ fun DatabaseScreen(navController: NavController) {
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         db.birthdayDao().insert(entry)
-                        val newList = db.birthdayDao().getAll()
+                        val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                         withContext(Dispatchers.Main) {
                             birthdayList = newList
                             hasData = newList.isNotEmpty()
@@ -600,7 +670,7 @@ fun BirthdayListItem(
             supportingContent = {
                 Column {
                     Text(
-                        text = "Phone No. : ${entry.phoneNumber}",
+                        text = "Phone No.: ${entry.phoneNumber}",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -617,6 +687,34 @@ fun BirthdayListItem(
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
+                    Text(
+                        text = "Department: ${entry.department}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    if (entry.personType == "Student") {
+                        Text(
+                            text = "Year: ${entry.year}",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    Text(
+                        text = "Group ID: ${entry.groupId}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    if (entry.personType == "Staff" && entry.isHod) {
+                        Text(
+                            text = "HOD: Yes",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
                 }
             },
             leadingContent = if (isSelected) {
@@ -663,12 +761,29 @@ fun BirthdayListItem(
 fun EnhancedSearchBarSection(
     searchQuery: String,
     onQueryChange: (String) -> Unit,
-    filterType: String?,
-    onFilterTypeChange: (String?) -> Unit,
+    filterType: String,
+    onFilterTypeChange: (String) -> Unit,
+    department: String,
+    onDepartmentChange: (String) -> Unit,
+    year: String,
+    onYearChange: (String) -> Unit,
     sortOrder: String,
     onSortOrderChange: (String) -> Unit
 ) {
+    val departments = listOf(
+        "Computer",
+        "ENTC",
+        "Civil",
+        "Mechanical",
+        "Electronics",
+        "Electronics & Comp"
+    )
+
+    val years = listOf("All", "2nd", "3rd", "4th")
+
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var departmentExpanded by remember { mutableStateOf(false) }
+    var yearExpanded by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
@@ -723,18 +838,18 @@ fun EnhancedSearchBarSection(
                 .padding(vertical = 8.dp)
         ) {
             FilterChip(
-                selected = filterType == null,
-                onClick = { onFilterTypeChange(null) },
+                selected = filterType == "All",
+                onClick = { onFilterTypeChange("All") },
                 label = { Text("All") }
             )
             FilterChip(
                 selected = filterType == "Student",
-                onClick = { onFilterTypeChange(if (filterType == "Student") null else "Student") },
+                onClick = { onFilterTypeChange("Student") },
                 label = { Text("Students") }
             )
             FilterChip(
                 selected = filterType == "Staff",
-                onClick = { onFilterTypeChange(if (filterType == "Staff") null else "Staff") },
+                onClick = { onFilterTypeChange("Staff") },
                 label = { Text("Staff") }
             )
             Box {
@@ -768,6 +883,94 @@ fun EnhancedSearchBarSection(
                             sortMenuExpanded = false
                         }
                     )
+                }
+            }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        ) {
+            ExposedDropdownMenuBox(
+                expanded = departmentExpanded,
+                onExpandedChange = { departmentExpanded = !departmentExpanded },
+                modifier = Modifier
+                    .width(200.dp) // Fixed width for smaller box
+            ) {
+                OutlinedTextField(
+                    value = department,
+                    onValueChange = {},
+                    label = { Text("Department", style = MaterialTheme.typography.bodySmall) }, // Smaller font
+                    readOnly = true,
+                    modifier = Modifier
+                        .menuAnchor()
+                        .width(200.dp) // Match box width
+                        .padding(horizontal = 4.dp), // Compact padding
+                    textStyle = MaterialTheme.typography.bodySmall, // Smaller text
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded)
+                    }
+                )
+                ExposedDropdownMenu(
+                    expanded = departmentExpanded,
+                    onDismissRequest = { departmentExpanded = false },
+                    modifier = Modifier
+                        .width(200.dp) // Match text field width
+                        .heightIn(max = 200.dp) // Limit dropdown height
+                ) {
+                    departments.forEach { dept ->
+                        DropdownMenuItem(
+                            text = { Text(dept, style = MaterialTheme.typography.bodySmall) }, // Smaller text
+                            onClick = {
+                                onDepartmentChange(dept)
+                                departmentExpanded = false
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp) // Compact padding
+                        )
+                    }
+                }
+            }
+
+            ExposedDropdownMenuBox(
+                expanded = yearExpanded,
+                onExpandedChange = { yearExpanded = !yearExpanded },
+                modifier = Modifier
+                    .width(200.dp) // Fixed width for smaller box
+            ) {
+                OutlinedTextField(
+                    value = year,
+                    onValueChange = {},
+                    label = { Text("Year", style = MaterialTheme.typography.bodySmall) }, // Smaller font
+                    readOnly = true,
+                    modifier = Modifier
+                        .menuAnchor()
+                        .width(100.dp) // Match box width
+                        .padding(horizontal = 4.dp), // Compact padding
+                    textStyle = MaterialTheme.typography.bodySmall, // Smaller text
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearExpanded)
+                    },
+                    enabled = filterType == "Student"
+                )
+                ExposedDropdownMenu(
+                    expanded = yearExpanded,
+                    onDismissRequest = { yearExpanded = false },
+                    modifier = Modifier
+                        .width(200.dp) // Match text field width
+                        .heightIn(max = 200.dp) // Limit dropdown height
+                ) {
+                    years.forEach { yr ->
+                        DropdownMenuItem(
+                            text = { Text(yr, style = MaterialTheme.typography.bodySmall) }, // Smaller text
+                            onClick = {
+                                onYearChange(yr)
+                                yearExpanded = false
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp) // Compact padding
+                        )
+                    }
                 }
             }
         }

@@ -15,8 +15,8 @@ import androidx.core.app.NotificationManagerCompat
 fun sendSMS(context: Context, phoneNumber: String, name: String, personType: String) {
     val TAG = "SmsUtils"
     val message = when (personType) {
-        "Student" -> "Happy Birthday $name!\nWishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
-        "Staff" -> "Happy Birthday $name sir!\nWishing you good health , happiness and continued ahead success in all you do. -SSVPS College of Engineering, Dhule"
+        "Student" -> "Happy Birthday, $name!  Wishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
+        "Staff" -> "Happy Birthday, $name!  Wishing you good health, happiness, and continued success. -SSVPS College of Engineering, Dhule"
         else -> return
     }
 
@@ -29,6 +29,50 @@ fun sendSMS(context: Context, phoneNumber: String, name: String, personType: Str
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send SMS to $phoneNumber: ${e.message}")
             showNotification(context, "SMS Failed", "Failed to send SMS: ${e.message}")
+        }
+    } else {
+        Log.e(TAG, "SEND_SMS permission not granted")
+        showNotification(context, "Permission Error", "SEND_SMS permission not granted")
+    }
+}
+
+fun sendPeerSMS(context: Context, phoneNumber: String, birthdayName: String, personType: String) {
+    val TAG = "SmsUtils"
+    val message = when (personType) {
+        "Student" -> "Today is $birthdayName’s birthday! 🎉 Wish them well!"
+        "Staff" -> "Today is $birthdayName’s birthday! 🎉 Send your wishes!"
+        else -> return
+    }
+
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+        try {
+            val smsManager = SmsManager.getDefault()
+            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+            Log.d(TAG, "Peer SMS sent to $phoneNumber: $message")
+            showNotification(context, "Peer SMS Sent", "Peer SMS sent to $phoneNumber")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send peer SMS to $phoneNumber: ${e.message}")
+            showNotification(context, "Peer SMS Failed", "Failed to send peer SMS: ${e.message}")
+        }
+    } else {
+        Log.e(TAG, "SEND_SMS permission not granted")
+        showNotification(context, "Permission Error", "SEND_SMS permission not granted")
+    }
+}
+
+fun sendHodSMS(context: Context, phoneNumber: String, birthdayName: String) {
+    val TAG = "SmsUtils"
+    val message = "Today is $birthdayName’s birthday from your department team."
+
+    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+        try {
+            val smsManager = SmsManager.getDefault()
+            smsManager.sendTextMessage(phoneNumber, null, message, null, null)
+            Log.d(TAG, "HOD SMS sent to $phoneNumber: $message")
+            showNotification(context, "HOD SMS Sent", "HOD SMS sent to $phoneNumber")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to send HOD SMS to $phoneNumber: ${e.message}")
+            showNotification(context, "HOD SMS Failed", "Failed to send HOD SMS: ${e.message}")
         }
     } else {
         Log.e(TAG, "SEND_SMS permission not granted")
