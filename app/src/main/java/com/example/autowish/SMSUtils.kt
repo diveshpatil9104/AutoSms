@@ -15,8 +15,8 @@ import androidx.core.app.NotificationManagerCompat
 fun sendSMS(context: Context, phoneNumber: String, name: String, personType: String) {
     val TAG = "SmsUtils"
     val message = when (personType) {
-        "Student" -> "Happy Birthday $name! Wishing you a day filled with joy and a year ahead filled with learning and success."
-        "Staff" -> "Happy Birthday $name sir! Wishing you a day filled with joy and a year ahead filled with learning and success."
+        "Student" -> "Happy Birthday $name!\nWishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
+        "Staff" -> "Happy Birthday $name sir!\nWishing you good health , happiness and continued ahead success in all you do. -SSVPS College of Engineering, Dhule"
         else -> return
     }
 

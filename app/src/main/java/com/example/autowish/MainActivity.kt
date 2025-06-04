@@ -110,6 +110,6 @@ fun AppNavigation() {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "home") {
         composable("home") { HomeScreen(navController) }
-        composable("database") { DatabaseScreen(navController) }
+        composable("Database") { DatabaseScreen(navController) }
     }
 }

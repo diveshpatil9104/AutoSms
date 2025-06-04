@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -167,7 +168,9 @@ fun DatabaseScreen(navController: NavController) {
     }
 
     Scaffold(
+
         topBar = {
+
             if (selectedItems.isEmpty()) {
                 TopAppBar(
                     title = {
@@ -180,6 +183,7 @@ fun DatabaseScreen(navController: NavController) {
                             )
                         )
                     },
+
                     actions = {
                         IconButton(onClick = { showForm = true }) {
                             Icon(Icons.Default.Add, contentDescription = "Add Entry")
@@ -342,20 +346,10 @@ fun DatabaseScreen(navController: NavController) {
             }
         },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home") },
-                    selected = false,
-                    onClick = { navController.navigate("home") }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.List, contentDescription = "Database") },
-                    label = { Text("Database") },
-                    selected = true,
-                    onClick = { navController.navigate("database") }
-                )
-            }
+            BottomNavigationBar(
+                navController = navController,
+                isHomeSelected =false
+            )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         containerColor = Color.Transparent,

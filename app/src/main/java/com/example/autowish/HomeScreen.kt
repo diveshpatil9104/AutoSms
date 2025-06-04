@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -178,22 +177,10 @@ fun HomeScreen(navController: NavController) {
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            ) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home") },
-                    selected = true,
-                    onClick = { navController.navigate("home") }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.List, contentDescription = "Database") },
-                    label = { Text("Database") },
-                    selected = false,
-                    onClick = { navController.navigate("database") }
-                )
-            }
+            BottomNavigationBar(
+                navController = navController,
+                isHomeSelected = true
+            )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }, // Added SnackbarHost
         containerColor = Color.Transparent
