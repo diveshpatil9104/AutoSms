@@ -1,7 +1,6 @@
 package com.example.autowish
 
 import android.Manifest
-import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -31,12 +30,28 @@ class MainActivity : ComponentActivity() {
     private val TAG = "MainActivity"
 
     private val requestPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-        val allGranted = permissions.all { it.value }
-        if (allGranted) {
-            Log.d(TAG, "All permissions granted, scheduling alarm")
+        permissions.forEach { (permission, granted) ->
+            Log.d(TAG, "Permission $permission: ${if (granted) "granted" else "denied"}")
+        }
+        // Critical permissions required for SMS and alarm functionality
+        val criticalPermissions = listOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.SCHEDULE_EXACT_ALARM
+        ).filter { permissions.containsKey(it) }
+        val allCriticalGranted = criticalPermissions.all { permissions[it] == true }
+        if (allCriticalGranted) {
+            Log.d(TAG, "All critical permissions granted, scheduling alarm")
             AlarmUtils.scheduleDailyAlarm(this)
         } else {
-            Log.e(TAG, "Required permissions not granted: $permissions")
+            Log.e(TAG, "Critical permissions not granted: $permissions")
+            // Optionally show UI prompt to request critical permissions
+        }
+        // Warn for non-critical permissions (e.g., POST_NOTIFICATIONS, READ_EXTERNAL_STORAGE)
+        val nonCriticalPermissions = permissions.keys - criticalPermissions.toSet()
+        nonCriticalPermissions.forEach { permission ->
+            if (permissions[permission] == false) {
+                Log.w(TAG, "Non-critical permission $permission denied, some features may be limited")
+            }
         }
     }
 
@@ -54,16 +69,21 @@ class MainActivity : ComponentActivity() {
         insetsController.isAppearanceLightStatusBars = !isDarkTheme
         insetsController.isAppearanceLightNavigationBars = !isDarkTheme
 
-        // Permissions
+        // Request permissions
         val permissions = mutableListOf(
             Manifest.permission.SEND_SMS,
-            Manifest.permission.POST_NOTIFICATIONS,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
             Manifest.permission.ACCESS_NETWORK_STATE,
-            Manifest.permission.READ_PHONE_STATE // Added for SIM validation
+            Manifest.permission.READ_PHONE_STATE
         )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // API 33+
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // API 31+
             permissions.add(Manifest.permission.SCHEDULE_EXACT_ALARM)
+        }
+        // Request READ_EXTERNAL_STORAGE only if needed and on API 32 or lower
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) { // API 32 or lower
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
         requestPermissions.launch(permissions.toTypedArray())
 
@@ -76,21 +96,6 @@ class MainActivity : ComponentActivity() {
                     data = Uri.parse("package:$packageName")
                 })
             }
-        }
-
-        // Schedule alarm
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            if (!alarmManager.canScheduleExactAlarms()) {
-                Log.d(TAG, "Requesting SCHEDULE_EXACT_ALARM permission")
-                startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-            } else {
-                AlarmUtils.scheduleDailyAlarm(this)
-            }
-        } else {
-            AlarmUtils.scheduleDailyAlarm(this)
         }
 
         // Initialize WorkManager
