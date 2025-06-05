@@ -19,8 +19,8 @@ interface BirthdayDao {
     @Query("SELECT * FROM birthdays WHERE department = :department AND (:year IS NULL OR year = :year) AND (:groupId IS NULL OR groupId = :groupId) AND id != :excludeId")
     suspend fun getPeers(department: String, year: String?, groupId: String?, excludeId: Int): List<BirthdayEntry>
 
-    @Query("SELECT * FROM birthdays WHERE department = :department AND isHod = 1")
-    suspend fun getHodByDepartment(department: String): List<BirthdayEntry>
+    @Query("SELECT * FROM birthdays WHERE department = :department AND id != :excludeId AND personType = 'Staff'")
+    suspend fun getHodByDepartment(department: String, excludeId: Int): List<BirthdayEntry>
 
     @Query("SELECT * FROM birthdays ORDER BY birthDate ASC")
     suspend fun getAllSortedAsc(): List<BirthdayEntry>

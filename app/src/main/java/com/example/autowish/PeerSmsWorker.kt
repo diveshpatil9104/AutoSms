@@ -103,14 +103,19 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             .filter {
                 it.personType == "Student" &&
                         it.phoneNumber.matches(Regex("\\d{10,25}")) &&
-                        it.phoneNumber != phoneNumber
+                        it.phoneNumber != phoneNumber &&
+                        it.isHod == false // Explicitly exclude HODs for students
             }
 
         Log.d(TAG, "Found ${allPeers.size} student peers in group $groupId, dept $department, year $year")
 
         return when {
-            allPeers.size <= 3 -> allPeers // Small group, take all
-            else -> allPeers.shuffled().take(MAX_STUDENT_PEERS) // Randomly select 3
+            allPeers.isEmpty() -> {
+                Log.w(TAG, "No valid student peers found")
+                emptyList()
+            }
+            allPeers.size <= MAX_STUDENT_PEERS -> allPeers
+            else -> allPeers.shuffled().take(MAX_STUDENT_PEERS)
         }
     }
 
@@ -126,20 +131,34 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             return emptyList()
         }
 
-        val allPeers = db.birthdayDao().getPeers(department, null, groupId, birthdayId)
+        // Fetch non-HOD peers from same group ID and department
+        val nonHodPeers = db.birthdayDao().getPeers(department, null, groupId, birthdayId)
             .filter {
                 it.personType == "Staff" &&
                         it.phoneNumber.matches(Regex("\\d{10,25}")) &&
-                        it.phoneNumber != phoneNumber
+                        it.phoneNumber != phoneNumber &&
+                        it.isHod == false
             }
+            .shuffled()
+            .take(MAX_STAFF_PEERS)
 
-        Log.d(TAG, "Found ${allPeers.size} staff peers in group $groupId, dept $department")
+        Log.d(TAG, "Found ${nonHodPeers.size} non-HOD staff peers in group $groupId, dept $department")
 
-        val hod = allPeers.filter { it.isHod == true }.shuffled().take(1)
-        val nonHodPeers = allPeers.filter { it.isHod == false }.shuffled().take(MAX_STAFF_PEERS)
+        // Fetch HOD from same department, any group ID
+        val hodPeers = db.birthdayDao().getHodByDepartment(department, birthdayId)
+            .filter {
+                it.personType == "Staff" &&
+                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
+                        it.phoneNumber != phoneNumber &&
+                        it.isHod == true
+            }
+            .shuffled()
+            .take(1)
 
-        val selectedPeers = (hod + nonHodPeers).distinctBy { it.phoneNumber }
-        Log.d(TAG, "Selected ${hod.size} HOD(s) and ${nonHodPeers.size} non-HOD peer(s) for staff")
+        Log.d(TAG, "Found ${hodPeers.size} HOD(s) in dept $department for staff birthday ID $birthdayId: ${hodPeers.joinToString { "${it.name} (${it.phoneNumber}, group ${it.groupId})" }}")
+
+        val selectedPeers = (nonHodPeers + hodPeers).distinctBy { it.phoneNumber }
+        Log.d(TAG, "Selected ${selectedPeers.size} peers for staff: ${selectedPeers.joinToString { "${it.name} (${it.phoneNumber}, HOD: ${it.isHod}, group ${it.groupId})" }}")
         return selectedPeers
     }
 
