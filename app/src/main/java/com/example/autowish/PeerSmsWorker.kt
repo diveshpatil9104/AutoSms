@@ -3,24 +3,32 @@ package com.example.autowish
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
-import androidx.work.CoroutineWorker
-import androidx.work.WorkerParameters
+import androidx.work.*
 import kotlinx.coroutines.delay
+import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     private val TAG = "PeerSmsWorker"
     private val PREFS_NAME = "BirthdayPrefs"
-    private val PREF_FAILED_SMS = "failedSms"
     private val PREF_SENT_PEERS = "sentPeers"
-    private val SMS_DELAY_MS = 10000L // 10s to avoid throttling
-    private val MAX_RETRIES = 3
+    private val PREF_SMS_COUNT = "smsCount"
+    private val PREF_SMS_TIMESTAMP = "smsTimestamp"
+    private val SMS_DELAY_MS = 36000L
     private val MAX_STUDENT_PEERS = 3
     private val MAX_STAFF_PEERS = 2
+    private val SMS_LIMIT_PER_HOUR = 90
+    private val HOUR_MS = 3600000L
 
     private val sentPeers = ConcurrentHashMap<String, MutableSet<String>>()
 
     override suspend fun doWork(): Result {
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+            Log.w(TAG, "Outside sending window (midnight to 4 PM), queuing for tomorrow")
+            return Result.retry()
+        }
+
         val birthdayId = inputData.getInt(BirthdayAlarmReceiver.EXTRA_BIRTHDAY_ID, -1)
         val name = inputData.getString(BirthdayAlarmReceiver.EXTRA_BIRTHDAY_NAME) ?: return Result.failure()
         val personType = inputData.getString(BirthdayAlarmReceiver.EXTRA_PERSON_TYPE) ?: ""
@@ -39,8 +47,15 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
 
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val failedMessages = mutableListOf<BirthdayAlarmReceiver.FailedMessage>()
         loadSentPeers(prefs)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+        val currentTime = System.currentTimeMillis()
+
+        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+            smsCount.set(0)
+            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
+        }
 
         try {
             val peers = when (personType) {
@@ -55,151 +70,63 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             } else {
                 peers.forEachIndexed { index, peer ->
                     val peerKey = "${peer.phoneNumber}|$birthdayId"
-                    val type = if (peer.isHod == true) "hod" else "peer" // Define type here
+                    val type = if (peer.isHod == true) "hod" else "peer"
                     if (!hasSentPeer(peerKey)) {
-                        Log.d(TAG, "Sending $type SMS ${index + 1}/${peers.size} to ${peer.name} (${peer.phoneNumber}) for $name")
-                        val success = sendWithRetries(peer.phoneNumber, name, personType, type, failedMessages)
-                        if (success) {
-                            markPeerAsSent(peerKey, prefs)
-                            Log.d(TAG, "${type.replaceFirstChar { it.uppercase() }} SMS sent successfully to ${peer.phoneNumber}")
+                        if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
+                            db.smsQueueDao().insert(SmsQueueEntry(
+                                phoneNumber = peer.phoneNumber,
+                                name = name,
+                                personType = personType,
+                                type = type,
+                                retryCount = 0,
+                                timestamp = currentTime
+                            ))
                         } else {
-                            Log.e(TAG, "Failed to send $type SMS to ${peer.phoneNumber} after $MAX_RETRIES attempts")
+                            val success = SmsUtils.sendWithRetries(applicationContext, peer.phoneNumber, name, personType, type, smsCount, prefs)
+                            if (success) {
+                                markPeerAsSent(peerKey, prefs)
+                                Log.d(TAG, "$type SMS sent successfully to ${peer.phoneNumber}")
+                            } else {
+                                db.smsQueueDao().insert(SmsQueueEntry(
+                                    phoneNumber = peer.phoneNumber,
+                                    name = name,
+                                    personType = personType,
+                                    type = type,
+                                    retryCount = 1,
+                                    timestamp = currentTime
+                                ))
+                            }
                         }
                         delay(SMS_DELAY_MS)
                     } else {
-                        Log.d(TAG, "Skipping duplicate $type SMS to ${peer.phoneNumber} for birthday ID $birthdayId") // Use type here
+                        Log.d(TAG, "Skipping duplicate $type SMS to ${peer.phoneNumber} for birthday ID $birthdayId")
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error processing peer SMS for $name: ${e.message}", e)
+            Log.e(TAG, "Error processing peer SMS for $name: ${e.message}")
             return Result.retry()
         }
 
-        saveFailedMessages(prefs, failedMessages)
-        return if (failedMessages.isEmpty()) {
-            Log.d(TAG, "All peer/HOD SMS processed successfully for $name")
-            Result.success()
-        } else {
-            Log.w(TAG, "Some peer/HOD SMS failed for $name, scheduling retry")
-            Result.retry()
-        }
+        return Result.success()
     }
 
-    private suspend fun fetchStudentPeers(
-        db: BirthdayDatabase,
-        birthdayId: Int,
-        department: String,
-        year: String,
-        groupId: String,
-        phoneNumber: String
-    ): List<BirthdayEntry> {
-        if (department.isEmpty() || year.isEmpty() || groupId.isEmpty()) {
-            Log.w(TAG, "Invalid student parameters: dept=$department, year=$year, group=$groupId")
-            return emptyList()
-        }
-
-        val allPeers = db.birthdayDao().getPeers(department, year, groupId, birthdayId)
-            .filter {
-                it.personType == "Student" &&
-                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
-                        it.phoneNumber != phoneNumber &&
-                        it.isHod == false // Explicitly exclude HODs for students
-            }
-
-        Log.d(TAG, "Found ${allPeers.size} student peers in group $groupId, dept $department, year $year")
-
-        return when {
-            allPeers.isEmpty() -> {
-                Log.w(TAG, "No valid student peers found")
-                emptyList()
-            }
-            allPeers.size <= MAX_STUDENT_PEERS -> allPeers
-            else -> allPeers.shuffled().take(MAX_STUDENT_PEERS)
-        }
+    private suspend fun fetchStudentPeers(db: BirthdayDatabase, birthdayId: Int, department: String, year: String, groupId: String, phoneNumber: String): List<BirthdayEntry> {
+        if (department.isEmpty() || year.isEmpty() || groupId.isEmpty()) return emptyList()
+        return db.birthdayDao().getPeers(department, year, groupId, birthdayId)
+            .filter { it.personType == "Student" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != phoneNumber && it.isHod == false }
+            .let { if (it.size <= MAX_STUDENT_PEERS) it else it.shuffled().take(MAX_STUDENT_PEERS) }
     }
 
-    private suspend fun fetchStaffPeers(
-        db: BirthdayDatabase,
-        birthdayId: Int,
-        department: String,
-        groupId: String,
-        phoneNumber: String
-    ): List<BirthdayEntry> {
-        if (department.isEmpty() || groupId.isEmpty()) {
-            Log.w(TAG, "Invalid staff parameters: dept=$department, group=$groupId")
-            return emptyList()
-        }
-
-        // Fetch non-HOD peers from same group ID and department
+    private suspend fun fetchStaffPeers(db: BirthdayDatabase, birthdayId: Int, department: String, groupId: String, phoneNumber: String): List<BirthdayEntry> {
+        if (department.isEmpty() || groupId.isEmpty()) return emptyList()
         val nonHodPeers = db.birthdayDao().getPeers(department, null, groupId, birthdayId)
-            .filter {
-                it.personType == "Staff" &&
-                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
-                        it.phoneNumber != phoneNumber &&
-                        it.isHod == false
-            }
-            .shuffled()
-            .take(MAX_STAFF_PEERS)
-
-        Log.d(TAG, "Found ${nonHodPeers.size} non-HOD staff peers in group $groupId, dept $department")
-
-        // Fetch HOD from same department, any group ID
+            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != phoneNumber && it.isHod == false }
+            .shuffled().take(MAX_STAFF_PEERS)
         val hodPeers = db.birthdayDao().getHodByDepartment(department, birthdayId)
-            .filter {
-                it.personType == "Staff" &&
-                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
-                        it.phoneNumber != phoneNumber &&
-                        it.isHod == true
-            }
-            .shuffled()
-            .take(1)
-
-        Log.d(TAG, "Found ${hodPeers.size} HOD(s) in dept $department for staff birthday ID $birthdayId: ${hodPeers.joinToString { "${it.name} (${it.phoneNumber}, group ${it.groupId})" }}")
-
-        val selectedPeers = (nonHodPeers + hodPeers).distinctBy { it.phoneNumber }
-        Log.d(TAG, "Selected ${selectedPeers.size} peers for staff: ${selectedPeers.joinToString { "${it.name} (${it.phoneNumber}, HOD: ${it.isHod}, group ${it.groupId})" }}")
-        return selectedPeers
-    }
-
-    private suspend fun sendWithRetries(
-        phoneNumber: String,
-        name: String,
-        personType: String,
-        type: String,
-        failedMessages: MutableList<BirthdayAlarmReceiver.FailedMessage>,
-        retries: Int = MAX_RETRIES
-    ): Boolean {
-        if (!phoneNumber.matches(Regex("\\d{10,25}"))) {
-            Log.w(TAG, "Invalid phone number: $phoneNumber for $type SMS")
-            return false
-        }
-
-        var attempt = 0
-        var delayMs = 10000L
-        while (attempt < retries) {
-            try {
-                Log.d(TAG, "Attempting $type SMS to $phoneNumber for $name on attempt ${attempt + 1}")
-                when (type) {
-                    "peer" -> SmsUtils.sendPeerSms(applicationContext, phoneNumber, name, personType)
-                    "hod" -> SmsUtils.sendHodSms(applicationContext, phoneNumber, name)
-                }
-                Log.d(TAG, "$type SMS sent successfully to $phoneNumber on attempt ${attempt + 1}")
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}", e)
-                attempt++
-                if (attempt < retries) {
-                    Log.d(TAG, "Retrying $type SMS to $phoneNumber after ${delayMs}ms")
-                    delay(delayMs)
-                    delayMs *= 2
-                } else {
-                    failedMessages.add(BirthdayAlarmReceiver.FailedMessage(phoneNumber, name, personType, type, 0))
-                }
-            }
-        }
-        Log.e(TAG, "Exhausted retries for $type SMS to $phoneNumber for $name")
-        return false
+            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != phoneNumber && it.isHod == true }
+            .shuffled().take(1)
+        return (nonHodPeers + hodPeers).distinctBy { it.phoneNumber }
     }
 
     private fun loadSentPeers(prefs: SharedPreferences) {
@@ -211,7 +138,6 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add(birthdayId)
             }
         }
-        Log.d(TAG, "Loaded ${sentSet.size} sent peer entries")
     }
 
     private fun hasSentPeer(peerKey: String): Boolean {
@@ -228,12 +154,5 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add(birthdayId)
         val updatedSet = sentPeers.entries.flatMap { (phone, ids) -> ids.map { "$phone|$it" } }.toSet()
         prefs.edit().putStringSet(PREF_SENT_PEERS, updatedSet).apply()
-        Log.d(TAG, "Marked peer SMS as sent for $peerKey")
-    }
-
-    private fun saveFailedMessages(prefs: SharedPreferences, failedMessages: List<BirthdayAlarmReceiver.FailedMessage>) {
-        val failedSet = failedMessages.map { it.toString() }.toSet()
-        prefs.edit().putStringSet(PREF_FAILED_SMS, failedSet).apply()
-        Log.d(TAG, "Saved ${failedSet.size} failed messages to SharedPreferences")
     }
 }

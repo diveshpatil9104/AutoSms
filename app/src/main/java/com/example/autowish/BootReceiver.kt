@@ -4,228 +4,190 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.util.Log
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 
 class BootReceiver : BroadcastReceiver() {
     private val TAG = "BootReceiver"
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SENT_DATE = "lastSentDate"
-    private val PREF_FAILED_SMS = "failedSms"
-    private val MAX_RETRIES = 3
-    private val RETRY_DELAY_MS = 10000L
-    private val SMS_DELAY_MS = 10000L
+    private val PREF_SMS_COUNT = "smsCount"
+    private val PREF_SMS_TIMESTAMP = "smsTimestamp"
+    private val SMS_DELAY_MS = 36000L // 36 seconds
     private val MAX_STUDENT_PEERS = 3
     private val MAX_STAFF_PEERS = 2
+    private val SMS_LIMIT_PER_HOUR = 90
+    private val HOUR_MS = 3600000L
 
     override fun onReceive(context: Context, intent: Intent) {
-        Log.d(TAG, "Received intent: ${intent.action}")
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            Log.d(TAG, "Device boot completed at ${Date()}, rescheduling alarm")
-            AlarmUtils.scheduleDailyAlarm(context)
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        Log.d(TAG, "Device boot completed at ${Date()}")
 
-            val db = try {
-                BirthdayDatabase.getInstance(context)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to initialize database: ${e.message}")
-                return
-            }
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val today = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date())
-            val yesterday = SimpleDateFormat("MM-dd", Locale.getDefault()).format(
-                Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, -1) }.time
-            )
-
-            CoroutineScope(Dispatchers.IO).launch {
-                if (!isNetworkAvailable(context)) {
-                    Log.w(TAG, "No network available, attempting retry")
-                    retrySendSMS(context, db, prefs, today, yesterday)
-                    return@launch
-                }
-
-                processMissedBirthdays(context, db, prefs, today, yesterday)
-                processFailedMessages(context, prefs)
-            }
-        } else {
-            Log.w(TAG, "Unexpected intent action: ${intent.action}")
-        }
-    }
-
-    private suspend fun processMissedBirthdays(context: Context, db: BirthdayDatabase, prefs: SharedPreferences, today: String, yesterday: String) {
-        val lastSentDate = prefs.getString(PREF_SENT_DATE, "")
-        val failedMessages = mutableListOf<BirthdayAlarmReceiver.FailedMessage>()
-
-        if (lastSentDate != today) {
-            try {
-                val todayList = db.birthdayDao().getBirthdaysByDate(today)
-                Log.d(TAG, "Found ${todayList.size} birthdays for $today after boot")
-                if (todayList.isEmpty()) {
-                    Log.d(TAG, "No birthdays found for $today")
-                }
-                todayList.forEach { birthday ->
-                    val directSuccess = sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", failedMessages)
-                    if (!directSuccess) {
-                        Log.w(TAG, "Failed to send direct SMS to ${birthday.name}")
-                    }
-                    delay(SMS_DELAY_MS)
-
-                    val peers = when (birthday.personType) {
-                        "Student" -> {
-                            db.birthdayDao().getPeers(birthday.department, birthday.year, birthday.groupId, birthday.id)
-                                .filter { it.personType == "Student" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber }
-                                .let { if (it.size <= 3) it else it.shuffled().take(MAX_STUDENT_PEERS) }
-                        }
-                        "Staff" -> {
-                            val allPeers = db.birthdayDao().getPeers(birthday.department, null, birthday.groupId, birthday.id)
-                                .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber }
-                            val hod = allPeers.filter { it.isHod == true }.shuffled().take(1)
-                            val nonHod = allPeers.filter { it.isHod == false }.shuffled().take(MAX_STAFF_PEERS)
-                            (hod + nonHod).distinctBy { it.phoneNumber }
-                        }
-                        else -> emptyList()
-                    }
-
-                    peers.forEach { peer ->
-                        val type = if (peer.isHod == true) "hod" else "peer"
-                        val peerSuccess = sendWithRetries(context, peer.phoneNumber, birthday.name, birthday.personType, type, failedMessages)
-                        if (!peerSuccess) {
-                            Log.w(TAG, "Failed to send $type SMS to ${peer.phoneNumber}")
-                        }
-                        delay(SMS_DELAY_MS)
-                    }
-                }
-                if (todayList.isNotEmpty()) {
-                    prefs.edit().putString(PREF_SENT_DATE, today).apply()
-                    Log.d(TAG, "Updated lastSentDate = $today")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing today’s birthdays: ${e.message}")
-            }
-        } else {
-            Log.d(TAG, "SMS already sent for $today, skipping")
-        }
-
-        if (lastSentDate != yesterday) {
-            try {
-                val yesterdayList = db.birthdayDao().getBirthdaysByDate(yesterday)
-                Log.d(TAG, "Found ${yesterdayList.size} birthdays for $yesterday after boot")
-                if (yesterdayList.isEmpty()) {
-                    Log.d(TAG, "No birthdays found for $yesterday")
-                }
-                yesterdayList.forEach { birthday ->
-                    val directSuccess = sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", failedMessages)
-                    if (!directSuccess) {
-                        Log.w(TAG, "Failed to send direct SMS to ${birthday.name}")
-                    }
-                    delay(SMS_DELAY_MS)
-                }
-                if (yesterdayList.isNotEmpty()) {
-                    prefs.edit().putString(PREF_SENT_DATE, yesterday).apply()
-                    Log.d(TAG, "Updated lastSentDate = $yesterday")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error processing yesterday’s birthdays: ${e.message}")
-            }
-        } else {
-            Log.d(TAG, "SMS already sent for $yesterday, skipping")
-        }
-
-        saveFailedMessages(prefs, failedMessages)
-    }
-
-    private suspend fun retrySendSMS(context: Context, db: BirthdayDatabase, prefs: SharedPreferences, today: String, yesterday: String) {
-        var attempts = 0
-        while (attempts < MAX_RETRIES && !isNetworkAvailable(context)) {
-            Log.d(TAG, "Retry attempt ${attempts + 1} of $MAX_RETRIES: Waiting for network")
-            delay(RETRY_DELAY_MS)
-            attempts++
-        }
-        if (!isNetworkAvailable(context)) {
-            Log.e(TAG, "Failed to send SMS: No network after $MAX_RETRIES retries")
+        AlarmUtils.scheduleDailyAlarm(context)
+        val db = try {
+            BirthdayDatabase.getInstance(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize database: ${e.message}")
             return
         }
-        Log.d(TAG, "Network available after retry, processing birthdays")
-        processMissedBirthdays(context, db, prefs, today, yesterday)
-        processFailedMessages(context, prefs)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            processMissedBirthdays(context, db, prefs)
+            processQueuedSms(context, db, prefs)
+        }
     }
 
-    private fun isNetworkAvailable(context: Context): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
+    private suspend fun processMissedBirthdays(context: Context, db: BirthdayDatabase, prefs: SharedPreferences) {
+        val sdf = SimpleDateFormat("MM-dd", Locale.getDefault())
+        val today = sdf.format(Date())
+        val calendar = Calendar.getInstance()
+        calendar.add(Calendar.DAY_OF_MONTH, -1)
+        val yesterday = sdf.format(calendar.time)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+        val currentTime = System.currentTimeMillis()
 
-    private suspend fun processFailedMessages(context: Context, prefs: SharedPreferences) {
-        val failedSet = prefs.getStringSet(PREF_FAILED_SMS, emptySet())?.toList() ?: emptyList()
-        if (failedSet.isEmpty()) {
-            Log.d(TAG, "No failed messages to process")
+        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+            smsCount.set(0)
+            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
+        }
+
+        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (currentHour > 16) {
+            Log.w(TAG, "Outside sending window (midnight to 4 PM), queuing for tomorrow")
             return
         }
 
-        Log.d(TAG, "Processing ${failedSet.size} failed messages")
-        val remainingFailed = mutableListOf<BirthdayAlarmReceiver.FailedMessage>()
-        failedSet.forEach { entry ->
-            val failedMessage = BirthdayAlarmReceiver.FailedMessage.fromString(entry)
-            if (failedMessage != null && failedMessage.retryCount < 5) {
-                val success = sendWithRetries(context, failedMessage.phoneNumber, failedMessage.name, failedMessage.personType, failedMessage.type, remainingFailed, retries = 1)
-                if (success) {
-                    Log.d(TAG, "Resent ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
+        val datesToProcess = listOf(today, yesterday).distinct()
+        Log.d(TAG, "Processing birthdays for dates: ${datesToProcess.joinToString()}")
+        for (date in datesToProcess) {
+            if (prefs.getString(PREF_SENT_DATE, "") == date) {
+                Log.d(TAG, "SMS already sent for $date, skipping")
+                continue
+            }
+
+            val birthdayList = db.birthdayDao().getBirthdaysByDate(date)
+            Log.d(TAG, "Found ${birthdayList.size} birthdays for $date after boot")
+            if (birthdayList.isEmpty()) continue
+
+            birthdayList.forEach { birthday ->
+                if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
+                    db.smsQueueDao().insert(SmsQueueEntry(
+                        phoneNumber = birthday.phoneNumber,
+                        name = birthday.name,
+                        personType = birthday.personType,
+                        type = "direct",
+                        retryCount = 0,
+                        timestamp = currentTime
+                    ))
                 } else {
-                    Log.w(TAG, "Failed to resend ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
-                    remainingFailed.add(failedMessage.copy(retryCount = failedMessage.retryCount + 1))
+                    val directSuccess = SmsUtils.sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", smsCount, prefs)
+                    if (directSuccess) {
+                        Log.d(TAG, "Direct SMS sent for ${birthday.name}")
+                    } else {
+                        db.smsQueueDao().insert(SmsQueueEntry(
+                            phoneNumber = birthday.phoneNumber,
+                            name = birthday.name,
+                            personType = birthday.personType,
+                            type = "direct",
+                            retryCount = 1,
+                            timestamp = currentTime
+                        ))
+                    }
                 }
                 delay(SMS_DELAY_MS)
-            } else if (failedMessage != null) {
-                Log.w(TAG, "Max retries reached for ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
-                remainingFailed.add(failedMessage)
+
+                val peers = when (birthday.personType) {
+                    "Student" -> db.birthdayDao().getPeers(birthday.department, birthday.year, birthday.groupId, birthday.id)
+                        .filter { it.personType == "Student" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == false }
+                        .let { if (it.size <= MAX_STUDENT_PEERS) it else it.shuffled().take(MAX_STUDENT_PEERS) }
+                    "Staff" -> {
+                        val nonHodPeers = db.birthdayDao().getPeers(birthday.department, null, birthday.groupId, birthday.id)
+                            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == false }
+                            .shuffled().take(MAX_STAFF_PEERS)
+                        val hodPeers = db.birthdayDao().getHodByDepartment(birthday.department, birthday.id)
+                            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == true }
+                            .shuffled().take(1)
+                        (nonHodPeers + hodPeers).distinctBy { it.phoneNumber }
+                    }
+                    else -> emptyList()
+                }
+
+                peers.forEach { peer ->
+                    val type = if (peer.isHod == true) "hod" else "peer"
+                    if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
+                        db.smsQueueDao().insert(SmsQueueEntry(
+                            phoneNumber = peer.phoneNumber,
+                            name = birthday.name,
+                            personType = birthday.personType,
+                            type = type,
+                            retryCount = 0,
+                            timestamp = currentTime
+                        ))
+                    } else {
+                        val peerSuccess = SmsUtils.sendWithRetries(context, peer.phoneNumber, birthday.name, birthday.personType, type, smsCount, prefs)
+                        if (peerSuccess) {
+                            Log.d(TAG, "$type SMS sent for ${birthday.name} to ${peer.phoneNumber}")
+                        } else {
+                            db.smsQueueDao().insert(SmsQueueEntry(
+                                phoneNumber = peer.phoneNumber,
+                                name = birthday.name,
+                                personType = birthday.personType,
+                                type = type,
+                                retryCount = 1,
+                                timestamp = currentTime
+                            ))
+                        }
+                    }
+                    delay(SMS_DELAY_MS)
+                }
+            }
+
+            if (birthdayList.isNotEmpty()) {
+                prefs.edit().putString(PREF_SENT_DATE, date).apply()
+                Log.d(TAG, "Updated lastSentDate = $date")
             }
         }
-
-        saveFailedMessages(prefs, remainingFailed)
     }
 
-    private fun saveFailedMessages(prefs: SharedPreferences, failedMessages: List<BirthdayAlarmReceiver.FailedMessage>) {
-        val failedSet = failedMessages.map { it.toString() }.toSet()
-        prefs.edit().putStringSet(PREF_FAILED_SMS, failedSet).apply()
-        Log.d(TAG, "Saved ${failedSet.size} failed messages to SharedPreferences")
-    }
+    private suspend fun processQueuedSms(context: Context, db: BirthdayDatabase, prefs: SharedPreferences) {
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+        val currentTime = System.currentTimeMillis()
 
-    private suspend fun sendWithRetries(
-        context: Context,
-        phoneNumber: String,
-        name: String,
-        personType: String,
-        type: String,
-        failedMessages: MutableList<BirthdayAlarmReceiver.FailedMessage>,
-        retries: Int = MAX_RETRIES
-    ): Boolean {
-        var attempt = 0
-        var delay = RETRY_DELAY_MS
-        while (attempt < retries) {
-            try {
-                when (type) {
-                    "direct" -> SmsUtils.sendDirectSms(context, phoneNumber, name, personType)
-                    "peer" -> SmsUtils.sendPeerSms(context, phoneNumber, name, personType)
-                    "hod" -> SmsUtils.sendHodSms(context, phoneNumber, name)
-                }
-                Log.d(TAG, "$type SMS sent successfully to $phoneNumber on attempt ${attempt + 1}")
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}")
-                attempt++
-                if (attempt < retries) {
-                    delay(delay)
-                    delay *= 2
+        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+            smsCount.set(0)
+            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
+        }
+
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+            Log.w(TAG, "Outside sending window, queuing for tomorrow")
+            return
+        }
+
+        while (smsCount.get() < SMS_LIMIT_PER_HOUR) {
+            val queuedSms = db.smsQueueDao().getPendingSms(10)
+            if (queuedSms.isEmpty()) break
+
+            queuedSms.forEach { sms ->
+                if (smsCount.get() >= SMS_LIMIT_PER_HOUR) return@forEach
+                val success = SmsUtils.sendWithRetries(context, sms.phoneNumber, sms.name, sms.personType, sms.type, smsCount, prefs, sms.retryCount + 1)
+                if (success) {
+                    db.smsQueueDao().deleteById(sms.id)
+                    Log.d(TAG, "Sent queued ${sms.type} SMS to ${sms.phoneNumber}")
                 } else {
-                    failedMessages.add(BirthdayAlarmReceiver.FailedMessage(phoneNumber, name, personType, type, 0))
+                    if (sms.retryCount < 5) {
+                        db.smsQueueDao().insert(sms.copy(retryCount = sms.retryCount + 1))
+                        db.smsQueueDao().deleteById(sms.id)
+                    }
+                    Log.w(TAG, "Failed to send queued ${sms.type} SMS to ${sms.phoneNumber}")
                 }
+                delay(SMS_DELAY_MS)
             }
         }
-        return false
     }
 }

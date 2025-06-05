@@ -6,88 +6,67 @@ import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.delay
+import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 
 class RetryFailedSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     private val TAG = "RetryFailedSmsWorker"
     private val PREFS_NAME = "BirthdayPrefs"
-    private val PREF_FAILED_SMS = "failedSms"
-    private val SMS_DELAY_MS = 10000L
-    private val MAX_RETRY_ATTEMPTS = 5
+    private val PREF_SMS_COUNT = "smsCount"
+    private val PREF_SMS_TIMESTAMP = "smsTimestamp"
+    private val SMS_DELAY_MS = 36000L
+    private val SMS_LIMIT_PER_HOUR = 90
+    private val HOUR_MS = 3600000L
 
     override suspend fun doWork(): Result {
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+            Log.w(TAG, "Outside sending window, retrying tomorrow")
+            return Result.retry()
+        }
+
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val failedSet = prefs.getStringSet(PREF_FAILED_SMS, emptySet())?.toList() ?: emptyList()
-        if (failedSet.isEmpty()) {
-            Log.d(TAG, "No failed messages to process")
+        val db = BirthdayDatabase.getInstance(applicationContext)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+        val currentTime = System.currentTimeMillis()
+
+        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+            smsCount.set(0)
+            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
+        }
+
+        val queuedSms = db.smsQueueDao().getPendingSms(10)
+        if (queuedSms.isEmpty()) {
+            Log.d(TAG, "No queued messages to process")
             return Result.success()
         }
 
-        Log.d(TAG, "Processing ${failedSet.size} failed messages")
-        val remainingFailed = mutableListOf<BirthdayAlarmReceiver.FailedMessage>()
-        failedSet.forEach { entry ->
-            val failedMessage = BirthdayAlarmReceiver.FailedMessage.fromString(entry)
-            if (failedMessage != null && failedMessage.retryCount < MAX_RETRY_ATTEMPTS) {
-                val (phoneNumber, name, personType, type, retryCount) = failedMessage
-                val success = sendWithRetries(phoneNumber, name, personType, type, remainingFailed)
-                if (success) {
-                    Log.d(TAG, "Successfully resent $type SMS to $phoneNumber for $name")
-                } else {
-                    Log.w(TAG, "Failed to resend $type SMS to $phoneNumber for $name")
-                    remainingFailed.add(failedMessage.copy(retryCount = retryCount + 1))
+        Log.d(TAG, "Processing ${queuedSms.size} queued messages")
+        queuedSms.forEach { sms ->
+            if (smsCount.get() >= SMS_LIMIT_PER_HOUR) return@forEach
+            val success = SmsUtils.sendWithRetries(
+                applicationContext,
+                sms.phoneNumber,
+                sms.name,
+                sms.personType,
+                sms.type,
+                smsCount,
+                prefs,
+                sms.retryCount + 1
+            )
+            if (success) {
+                db.smsQueueDao().deleteById(sms.id)
+                Log.d(TAG, "Sent queued ${sms.type} SMS to ${sms.phoneNumber}")
+            } else {
+                if (sms.retryCount < 5) {
+                    db.smsQueueDao().insert(sms.copy(retryCount = sms.retryCount + 1))
+                    db.smsQueueDao().deleteById(sms.id)
                 }
-                delay(SMS_DELAY_MS)
-            } else if (failedMessage != null) {
-                Log.w(TAG, "Max retries reached for ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
-                remainingFailed.add(failedMessage)
+                Log.w(TAG, "Failed to send queued ${sms.type} SMS to ${sms.phoneNumber}")
             }
+            delay(SMS_DELAY_MS)
         }
 
-        saveFailedMessages(prefs, remainingFailed)
-        return if (remainingFailed.isEmpty()) {
-            prefs.edit().remove(PREF_FAILED_SMS).apply()
-            Log.d(TAG, "Cleared failed messages from SharedPreferences")
-            Result.success()
-        } else {
-            Result.retry()
-        }
-    }
-
-    private suspend fun sendWithRetries(
-        phoneNumber: String,
-        name: String,
-        personType: String,
-        type: String,
-        failedMessages: MutableList<BirthdayAlarmReceiver.FailedMessage>,
-        retries: Int = 1
-    ): Boolean {
-        var attempt = 0
-        var delay = 10000L
-        while (attempt < retries) {
-            try {
-                when (type) {
-                    "direct" -> SmsUtils.sendDirectSms(applicationContext, phoneNumber, name, personType)
-                    "peer" -> SmsUtils.sendPeerSms(applicationContext, phoneNumber, name, personType)
-                    "hod" -> SmsUtils.sendHodSms(applicationContext, phoneNumber, name)
-                }
-                Log.d(TAG, "$type SMS sent successfully to $phoneNumber on attempt ${attempt + 1}")
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}")
-                attempt++
-                if (attempt < retries) {
-                    delay(delay)
-                    delay *= 2
-                } else {
-                    failedMessages.add(BirthdayAlarmReceiver.FailedMessage(phoneNumber, name, personType, type, 0))
-                }
-            }
-        }
-        return false
-    }
-
-    private fun saveFailedMessages(prefs: SharedPreferences, failedMessages: List<BirthdayAlarmReceiver.FailedMessage>) {
-        val failedSet = failedMessages.map { it.toString() }.toSet()
-        prefs.edit().putStringSet(PREF_FAILED_SMS, failedSet).apply()
-        Log.d(TAG, "Saved ${failedSet.size} failed messages to SharedPreferences")
+        return if (db.smsQueueDao().getQueueSize() > 0) Result.retry() else Result.success()
     }
 }

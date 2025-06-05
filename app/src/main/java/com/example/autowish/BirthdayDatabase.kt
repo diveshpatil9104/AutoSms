@@ -7,9 +7,10 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [BirthdayEntry::class], version = 3)
+@Database(entities = [BirthdayEntry::class, SmsQueueEntry::class], version = 4)
 abstract class BirthdayDatabase : RoomDatabase() {
     abstract fun birthdayDao(): BirthdayDao
+    abstract fun smsQueueDao(): SmsQueueDao
 
     companion object {
         @Volatile private var INSTANCE: BirthdayDatabase? = null
@@ -21,7 +22,7 @@ abstract class BirthdayDatabase : RoomDatabase() {
                     BirthdayDatabase::class.java,
                     "birthday_db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { INSTANCE = it }
             }
         }
@@ -67,6 +68,22 @@ abstract class BirthdayDatabase : RoomDatabase() {
                 """)
                 database.execSQL("DROP TABLE birthdays")
                 database.execSQL("ALTER TABLE birthdays_new RENAME TO birthdays")
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS sms_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        phoneNumber TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        personType TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        retryCount INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL
+                    )
+                """)
             }
         }
     }

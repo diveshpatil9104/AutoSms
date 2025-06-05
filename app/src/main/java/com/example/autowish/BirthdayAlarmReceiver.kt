@@ -4,29 +4,28 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.os.Build
 import android.util.Log
 import androidx.work.*
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.*
+//import java.util.concurrent.AtomicInteger
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class BirthdayAlarmReceiver : BroadcastReceiver() {
     private val TAG = "BirthdayAlarmReceiver"
     private val TEST_MODE = false
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SENT_DATE = "lastSentDate"
-    private val PREF_FAILED_SMS = "failedSms"
-    private val PREF_SENT_PEERS = "sentPeers"
-    private val MAX_RETRIES = 3
-    private val RETRY_DELAY_MS = 10000L
-    private val SMS_DELAY_MS = 10000L
-    private val MAX_RETRY_ATTEMPTS = 5
+    private val PREF_SMS_COUNT = "smsCount"
+    private val PREF_SMS_TIMESTAMP = "smsTimestamp"
+    private val SMS_DELAY_MS = 36000L
+    private val SMS_LIMIT_PER_HOUR = 90
+    private val HOUR_MS = 3600000L
     private val PEER_WORK_TAG = "peer_sms_work"
 
     companion object {
-        const val ACTION_PEER_SMS = "com.example.autowish.PEER_SMS"
         const val ACTION_RETRY_FAILED_SMS = "com.example.autowish.RETRY_FAILED_SMS"
         const val EXTRA_BIRTHDAY_ID = "birthday_id"
         const val EXTRA_BIRTHDAY_NAME = "birthday_name"
@@ -42,22 +41,16 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
 
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val today = SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date())
-        val lastSentDate = prefs.getString(PREF_SENT_DATE, "")
 
         when (intent.action) {
             ACTION_RETRY_FAILED_SMS -> {
                 CoroutineScope(Dispatchers.IO).launch {
-                    processFailedMessages(context, prefs)
+                    processQueuedSms(context, prefs)
                 }
             }
             else -> {
-                if (!TEST_MODE && lastSentDate == today) {
-                    Log.d(TAG, "SMS already sent today ($today), processing failed messages")
-                    CoroutineScope(Dispatchers.IO).launch {
-                        processFailedMessages(context, prefs)
-                        AlarmUtils.cancelAlarm(context)
-                        AlarmUtils.scheduleDailyAlarm(context)
-                    }
+                if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+                    Log.w(TAG, "Outside sending window (midnight to 4 PM), queuing for tomorrow")
                     return
                 }
 
@@ -70,42 +63,63 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
 
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
+                        if (!TEST_MODE && prefs.getString(PREF_SENT_DATE, "") == today) {
+                            Log.d(TAG, "SMS already sent today ($today), processing queued SMS")
+                            processQueuedSms(context, prefs)
+                            return@launch
+                        }
+
                         val list = db.birthdayDao().getBirthdaysByDate(today)
                         Log.d(TAG, "Found ${list.size} birthdays for $today: ${list.joinToString { it.name }}")
                         if (list.isEmpty()) {
                             Log.d(TAG, "No birthdays found for $today")
                         }
 
-                        val failedMessages = mutableListOf<FailedMessage>()
-                        // Only clear sent peers if it's a new day
-                        if (lastSentDate != today) {
-                            prefs.edit().remove(PREF_SENT_PEERS).apply()
-                            Log.d(TAG, "Cleared sent peers for new day $today")
+                        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+                        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+                        val currentTime = System.currentTimeMillis()
+
+                        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+                            smsCount.set(0)
+                            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
                         }
 
-                        // Send direct messages
                         list.forEachIndexed { index, birthday ->
-                            Log.d(TAG, "Processing birthday ${index + 1}/${list.size}: ${birthday.name} (ID: ${birthday.id}, Type: ${birthday.personType})")
-                            val directSuccess = sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", failedMessages)
-                            if (!directSuccess) {
-                                Log.w(TAG, "Failed to send direct SMS to ${birthday.name}")
+                            if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
+                                db.smsQueueDao().insert(SmsQueueEntry(
+                                    phoneNumber = birthday.phoneNumber,
+                                    name = birthday.name,
+                                    personType = birthday.personType,
+                                    type = "direct",
+                                    retryCount = 0,
+                                    timestamp = currentTime
+                                ))
+                            } else {
+                                val directSuccess = SmsUtils.sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", smsCount, prefs)
+                                if (!directSuccess) {
+                                    db.smsQueueDao().insert(SmsQueueEntry(
+                                        phoneNumber = birthday.phoneNumber,
+                                        name = birthday.name,
+                                        personType = birthday.personType,
+                                        type = "direct",
+                                        retryCount = 1,
+                                        timestamp = currentTime
+                                    ))
+                                }
                             }
                             delay(SMS_DELAY_MS)
                         }
 
-                        // Schedule peer messages
                         list.forEachIndexed { index, birthday ->
                             schedulePeerSmsWork(context, birthday, index * SMS_DELAY_MS)
                         }
 
-                        // Save failed messages
-                        saveFailedMessages(prefs, failedMessages)
                         if (!TEST_MODE && list.isNotEmpty()) {
                             prefs.edit().putString(PREF_SENT_DATE, today).apply()
                             Log.d(TAG, "Updated lastSentDate = $today")
                         }
 
-                        processFailedMessages(context, prefs)
+                        processQueuedSms(context, prefs)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error processing birthdays: ${e.message}")
                     } finally {
@@ -144,78 +158,45 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
         Log.d(TAG, "Scheduled peer SMS work for ${birthday.name} with delay ${delayMs}ms")
     }
 
-    private suspend fun sendWithRetries(
-        context: Context,
-        phoneNumber: String,
-        name: String,
-        personType: String,
-        type: String,
-        failedMessages: MutableList<FailedMessage>,
-        retries: Int = MAX_RETRIES
-    ): Boolean {
-        if (!phoneNumber.matches(Regex("\\d{10,25}"))) {
-            Log.w(TAG, "Invalid phone number: $phoneNumber for $type SMS")
-            return false
-        }
-        var attempt = 0
-        var delay = RETRY_DELAY_MS
-        while (attempt < retries) {
-            try {
-                when (type) {
-                    "direct" -> SmsUtils.sendDirectSms(context, phoneNumber, name, personType)
-                    "peer" -> SmsUtils.sendPeerSms(context, phoneNumber, name, personType)
-                    "hod" -> SmsUtils.sendHodSms(context, phoneNumber, name)
-                }
-                Log.d(TAG, "$type SMS sent to $phoneNumber on attempt ${attempt + 1}")
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}")
-                attempt++
-                if (attempt < retries) {
-                    delay(delay)
-                    delay *= 2
-                } else {
-                    failedMessages.add(FailedMessage(phoneNumber, name, personType, type, 0))
-                }
-            }
-        }
-        return false
-    }
+    private suspend fun processQueuedSms(context: Context, prefs: SharedPreferences) {
+        val db = BirthdayDatabase.getInstance(context)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
+        val currentTime = System.currentTimeMillis()
 
-    private suspend fun processFailedMessages(context: Context, prefs: SharedPreferences) {
-        val failedSet = prefs.getStringSet(PREF_FAILED_SMS, emptySet())?.toList() ?: emptyList()
-        if (failedSet.isEmpty()) {
-            Log.d(TAG, "No failed messages to process")
+        if (currentTime - lastSmsTimestamp > HOUR_MS) {
+            smsCount.set(0)
+            prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
+        }
+
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+            Log.w(TAG, "Outside sending window, queuing for tomorrow")
             return
         }
 
-        Log.d(TAG, "Processing ${failedSet.size} failed messages")
-        val remainingFailed = mutableListOf<FailedMessage>()
-        failedSet.forEach { entry ->
-            val failedMessage = FailedMessage.fromString(entry)
-            if (failedMessage != null && failedMessage.retryCount < MAX_RETRY_ATTEMPTS) {
-                val success = sendWithRetries(context, failedMessage.phoneNumber, failedMessage.name, failedMessage.personType, failedMessage.type, remainingFailed, retries = 1)
+        while (smsCount.get() < SMS_LIMIT_PER_HOUR) {
+            val queuedSms = db.smsQueueDao().getPendingSms(10)
+            if (queuedSms.isEmpty()) break
+
+            queuedSms.forEach { sms ->
+                if (smsCount.get() >= SMS_LIMIT_PER_HOUR) return@forEach
+                val success = SmsUtils.sendWithRetries(context, sms.phoneNumber, sms.name, sms.personType, sms.type, smsCount, prefs, sms.retryCount + 1)
                 if (success) {
-                    Log.d(TAG, "Resent ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
+                    db.smsQueueDao().deleteById(sms.id)
+                    Log.d(TAG, "Sent queued ${sms.type} SMS to ${sms.phoneNumber}")
                 } else {
-                    Log.w(TAG, "Failed to resend ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
-                    remainingFailed.add(failedMessage.copy(retryCount = failedMessage.retryCount + 1))
+                    if (sms.retryCount < 5) {
+                        db.smsQueueDao().insert(sms.copy(retryCount = sms.retryCount + 1))
+                        db.smsQueueDao().deleteById(sms.id)
+                    }
+                    Log.w(TAG, "Failed to send queued ${sms.type} SMS to ${sms.phoneNumber}")
                 }
                 delay(SMS_DELAY_MS)
-            } else if (failedMessage != null) {
-                Log.w(TAG, "Max retries reached for ${failedMessage.type} SMS to ${failedMessage.phoneNumber}")
-                remainingFailed.add(failedMessage)
             }
         }
 
-        saveFailedMessages(prefs, remainingFailed)
-        if (remainingFailed.isNotEmpty() && remainingFailed.any { it.retryCount < MAX_RETRY_ATTEMPTS }) {
+        if (db.smsQueueDao().getQueueSize() > 0) {
             scheduleRetryFailedSms(context, 10 * 60 * 1000L)
-        } else if (remainingFailed.isNotEmpty()) {
-            Log.d(TAG, "All failed messages reached max retries")
-        } else {
-            prefs.edit().remove(PREF_FAILED_SMS).apply()
-            Log.d(TAG, "Cleared failed messages")
         }
     }
 
@@ -231,29 +212,5 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
             workRequest
         )
         Log.d(TAG, "Scheduled retry failed SMS with delay ${delayMs}ms")
-    }
-
-    private fun saveFailedMessages(prefs: SharedPreferences, failedMessages: List<FailedMessage>) {
-        val failedSet = failedMessages.map { it.toString() }.toSet()
-        prefs.edit().putStringSet(PREF_FAILED_SMS, failedSet).apply()
-        Log.d(TAG, "Saved ${failedSet.size} failed messages")
-    }
-
-    data class FailedMessage(
-        val phoneNumber: String,
-        val name: String,
-        val personType: String,
-        val type: String,
-        val retryCount: Int = 0
-    ) {
-        override fun toString(): String = "$phoneNumber|$name|$personType|$type|$retryCount"
-        companion object {
-            fun fromString(entry: String): FailedMessage? {
-                val parts = entry.split("|")
-                return if (parts.size == 5) {
-                    FailedMessage(parts[0], parts[1], parts[2], parts[3], parts[4].toIntOrNull() ?: 0)
-                } else null
-            }
-        }
     }
 }

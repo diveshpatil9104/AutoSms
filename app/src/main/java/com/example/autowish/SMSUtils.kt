@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.telephony.SubscriptionManager
@@ -15,12 +16,18 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.delay
+import java.util.*
+import java.util.concurrent.atomic.AtomicInteger
 
 object SmsUtils {
     private const val TAG = "SmsUtils"
     private const val NOTIFICATION_CHANNEL_ID = "birthday_notifications"
     private const val NOTIFICATION_CHANNEL_NAME = "Birthday Notifications"
-    private const val SMS_QUEUE_DELAY_MS = 10000L
+    private const val SMS_QUEUE_DELAY_MS = 36000L // 36 seconds to avoid throttling (~100 SMS/hour)
+    private const val PREFS_NAME = "BirthdayPrefs"
+    private const val PREF_SMS_COUNT = "smsCount"
+    private const val PREF_SMS_TIMESTAMP = "smsTimestamp"
+    private const val HOUR_MS = 3600000L
 
     private fun validatePermissions(context: Context): Boolean {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
@@ -28,20 +35,17 @@ object SmsUtils {
             showNotification(context, "Permission Error", "SEND_SMS permission not granted")
             return false
         }
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "POST_NOTIFICATIONS permission not granted")
-        }
         return true
     }
 
     private fun isSimAvailable(context: Context): Boolean {
-        val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "READ_PHONE_STATE permission not granted")
+            showNotification(context, "Permission Error", "READ_PHONE_STATE permission not granted")
             return false
         }
-        val activeSubscriptions = subscriptionManager.activeSubscriptionInfoList
-        return activeSubscriptions?.isNotEmpty() == true
+        val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+        return subscriptionManager.activeSubscriptionInfoList?.isNotEmpty() == true
     }
 
     private fun getSmsManager(context: Context): SmsManager {
@@ -66,78 +70,108 @@ object SmsUtils {
         )
     }
 
+    suspend fun sendWithRetries(
+        context: Context,
+        phoneNumber: String,
+        name: String,
+        personType: String,
+        type: String,
+        smsCount: AtomicInteger,
+        prefs: SharedPreferences,
+        retryCount: Int = 0
+    ): Boolean {
+        if (!validatePermissions(context)) return false
+        if (!isSimAvailable(context)) {
+            Log.e(TAG, "No active SIM card")
+            showNotification(context, "SIM Error", "No active SIM card detected")
+            return false
+        }
+        if (!phoneNumber.matches(Regex("\\d{10,25}"))) {
+            Log.w(TAG, "Invalid phone number: $phoneNumber for $type SMS")
+            return false
+        }
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
+            Log.w(TAG, "Outside sending window (midnight to 4 PM) for $type SMS to $phoneNumber")
+            return false
+        }
+
+        var attempt = 0
+        var delayMs = 10000L
+        while (attempt < 3) {
+            try {
+                val message = when (type) {
+                    "direct" -> when (personType) {
+                        "Student" -> "Happy Birthday, $name! Wishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
+                        "Staff" -> "Happy Birthday, $name! Wishing you good health, happiness, and continued success. -SSVPS College of Engineering, Dhule"
+                        else -> throw IllegalArgumentException("Invalid personType: $personType")
+                    }
+                    "peer" -> when (personType) {
+                        "Student" -> "Today is $name’s birthday! 🎉 Wish them well!"
+                        "Staff" -> "Today is $name’s birthday! 🎉 Send your wishes!"
+                        else -> throw IllegalArgumentException("Invalid personType: $personType")
+                    }
+                    "hod" -> "Today is $name’s birthday! 🎉 Send your wishes!"
+                    else -> throw IllegalArgumentException("Invalid type: $type")
+                }
+
+                val smsManager = getSmsManager(context)
+                val sentIntent = createSentIntent(context, phoneNumber, name, type)
+                smsManager.sendTextMessage(phoneNumber, null, message, sentIntent, null)
+                smsCount.incrementAndGet()
+                prefs.edit()
+                    .putInt(PREF_SMS_COUNT, smsCount.get())
+                    .putLong(PREF_SMS_TIMESTAMP, System.currentTimeMillis())
+                    .apply()
+                Log.d(TAG, "$type SMS sent to $phoneNumber on attempt ${attempt + 1} (SMS count: ${smsCount.get()})")
+                delay(SMS_QUEUE_DELAY_MS)
+                return true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}")
+                attempt++
+                if (attempt < 3) {
+                    delay(delayMs)
+                    delayMs *= 2
+                } else {
+                    showNotification(context, "$type SMS Failed", "Failed to send $type SMS to $name after $retryCount retries")
+                }
+            }
+        }
+        return false
+    }
+
     suspend fun sendDirectSms(context: Context, phoneNumber: String, name: String, personType: String) {
-        if (!validatePermissions(context)) throw SecurityException("SEND_SMS permission not granted")
-        if (!isSimAvailable(context)) throw IllegalStateException("No active SIM card")
-        if (!phoneNumber.matches(Regex("\\d{10,25}"))) throw IllegalArgumentException("Invalid phone number: $phoneNumber")
-
-        val message = when (personType) {
-            "Student" -> "Happy Birthday, $name! Wishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
-            "Staff" -> "Happy Birthday, $name! Wishing you good health, happiness, and continued success. -SSVPS College of Engineering, Dhule"
-            else -> throw IllegalArgumentException("Invalid personType: $personType")
-        }
-
-        try {
-            val smsManager = getSmsManager(context)
-            val sentIntent = createSentIntent(context, phoneNumber, name, "direct")
-            smsManager.sendTextMessage(phoneNumber, null, message, sentIntent, null)
-            Log.d(TAG, "Direct SMS sent to $phoneNumber: $message")
-            showNotification(context, "Direct SMS Sent", "Birthday SMS sent to $name ($phoneNumber)")
-            delay(SMS_QUEUE_DELAY_MS)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending direct SMS to $phoneNumber: ${e.message}")
-            showNotification(context, "Direct SMS Failed", "Failed to send SMS to $name: ${e.message}")
-            throw e
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val success = sendWithRetries(context, phoneNumber, name, personType, "direct", smsCount, prefs)
+        if (!success) {
+            Log.w(TAG, "Failed to send direct SMS to $phoneNumber after retries")
         }
     }
 
-    suspend fun sendPeerSms(context: Context, phoneNumber: String, birthdayName: String, personType: String) {
-        if (!validatePermissions(context)) throw SecurityException("SEND_SMS permission not granted")
-        if (!isSimAvailable(context)) throw IllegalStateException("No active SIM card")
-        if (!phoneNumber.matches(Regex("\\d{10,25}"))) throw IllegalArgumentException("Invalid phone number: $phoneNumber")
-
-        val message = when (personType) {
-            "Student" -> "Today is $birthdayName’s birthday! 🎉 Wish them well!"
-            "Staff" -> "Today is $birthdayName’s birthday! 🎉 Send your wishes!"
-            else -> throw IllegalArgumentException("Invalid personType: $personType")
-        }
-
-        try {
-            val smsManager = getSmsManager(context)
-            val sentIntent = createSentIntent(context, phoneNumber, birthdayName, "peer")
-            smsManager.sendTextMessage(phoneNumber, null, message, sentIntent, null)
-            Log.d(TAG, "Peer SMS sent to $phoneNumber: $message")
-            showNotification(context, "Peer SMS Sent", "Peer SMS sent for $birthdayName to $phoneNumber")
-            delay(SMS_QUEUE_DELAY_MS)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending peer SMS to $phoneNumber: ${e.message}")
-            showNotification(context, "Peer SMS Failed", "Failed to send peer SMS for $birthdayName: ${e.message}")
-            throw e
+    suspend fun sendPeerSms(context: Context, phoneNumber: String, name: String, personType: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val success = sendWithRetries(context, phoneNumber, name, personType, "peer", smsCount, prefs)
+        if (!success) {
+            Log.w(TAG, "Failed to send peer SMS to $phoneNumber after retries")
         }
     }
 
-    suspend fun sendHodSms(context: Context, phoneNumber: String, birthdayName: String) {
-        if (!validatePermissions(context)) throw SecurityException("SEND_SMS permission not granted")
-        if (!isSimAvailable(context)) throw IllegalStateException("No active SIM card")
-        if (!phoneNumber.matches(Regex("\\d{10,25}"))) throw IllegalArgumentException("Invalid phone number: $phoneNumber")
-
-        val message = "Today is $birthdayName’s birthday! 🎉 Send your wishes!"
-
-        try {
-            val smsManager = getSmsManager(context)
-            val sentIntent = createSentIntent(context, phoneNumber, birthdayName, "hod")
-            smsManager.sendTextMessage(phoneNumber, null, message, sentIntent, null)
-            Log.d(TAG, "HOD SMS sent to $phoneNumber: $message")
-            showNotification(context, "HOD SMS Sent", "HOD SMS sent for $birthdayName to $phoneNumber")
-            delay(SMS_QUEUE_DELAY_MS)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending HOD SMS to $phoneNumber: ${e.message}")
-            showNotification(context, "HOD SMS Failed", "Failed to send HOD SMS for $birthdayName: ${e.message}")
-            throw e
+    suspend fun sendHodSms(context: Context, phoneNumber: String, name: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
+        val success = sendWithRetries(context, phoneNumber, name, "Staff", "hod", smsCount, prefs)
+        if (!success) {
+            Log.w(TAG, "Failed to send HOD SMS to $phoneNumber after retries")
         }
     }
 
     fun showNotification(context: Context, title: String, content: String) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "POST_NOTIFICATIONS permission not granted")
+            return
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
@@ -148,17 +182,13 @@ object SmsUtils {
         }
 
         val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(content)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .build()
 
-        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            NotificationManagerCompat.from(context).notify(System.currentTimeMillis().toInt(), notification)
-        } else {
-            Log.w(TAG, "POST_NOTIFICATIONS permission not granted")
-        }
+        NotificationManagerCompat.from(context).notify(System.currentTimeMillis().toInt(), notification)
     }
 }
