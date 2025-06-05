@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.work.*
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -48,6 +49,7 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         loadSentPeers(prefs)
+        Log.d(TAG, "Loaded ${sentPeers.size} peer keys from PREF_SENT_PEERS")
         val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
         val lastSmsTimestamp = prefs.getLong(PREF_SMS_TIMESTAMP, 0L)
         val currentTime = System.currentTimeMillis()
@@ -69,7 +71,8 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                 Log.w(TAG, "No valid peers found for $name")
             } else {
                 peers.forEachIndexed { index, peer ->
-                    val peerKey = "${peer.phoneNumber}|$birthdayId"
+                    val currentYear = SimpleDateFormat("yyyy", Locale.US).format(Date())
+                    val peerKey = "${peer.phoneNumber}|$birthdayId|$currentYear"
                     val type = if (peer.isHod == true) "hod" else "peer"
                     if (!hasSentPeer(peerKey)) {
                         if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
@@ -85,7 +88,7 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                             val success = SmsUtils.sendWithRetries(applicationContext, peer.phoneNumber, name, personType, type, smsCount, prefs)
                             if (success) {
                                 markPeerAsSent(peerKey, prefs)
-                                Log.d(TAG, "$type SMS sent successfully to ${peer.phoneNumber}")
+                                Log.d(TAG, "$type SMS sent successfully to ${peer.phoneNumber} with peerKey $peerKey")
                             } else {
                                 db.smsQueueDao().insert(SmsQueueEntry(
                                     phoneNumber = peer.phoneNumber,
@@ -99,7 +102,7 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                         }
                         delay(SMS_DELAY_MS)
                     } else {
-                        Log.d(TAG, "Skipping duplicate $type SMS to ${peer.phoneNumber} for birthday ID $birthdayId")
+                        Log.d(TAG, "Skipping duplicate $type SMS to ${peer.phoneNumber} for birthday ID $birthdayId, year $currentYear (peerKey: $peerKey)")
                     }
                 }
             }
@@ -112,14 +115,20 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     }
 
     private suspend fun fetchStudentPeers(db: BirthdayDatabase, birthdayId: Int, department: String, year: String, groupId: String, phoneNumber: String): List<BirthdayEntry> {
-        if (department.isEmpty() || year.isEmpty() || groupId.isEmpty()) return emptyList()
+        if (department.isEmpty() || year.isEmpty() || groupId.isEmpty()) {
+            Log.w(TAG, "Invalid peer data: dept=$department, year=$year, groupId=$groupId")
+            return emptyList()
+        }
         return db.birthdayDao().getPeers(department, year, groupId, birthdayId)
             .filter { it.personType == "Student" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != phoneNumber && it.isHod == false }
             .let { if (it.size <= MAX_STUDENT_PEERS) it else it.shuffled().take(MAX_STUDENT_PEERS) }
     }
 
     private suspend fun fetchStaffPeers(db: BirthdayDatabase, birthdayId: Int, department: String, groupId: String, phoneNumber: String): List<BirthdayEntry> {
-        if (department.isEmpty() || groupId.isEmpty()) return emptyList()
+        if (department.isEmpty() || groupId.isEmpty()) {
+            Log.w(TAG, "Invalid peer data: dept=$department, groupId=$groupId")
+            return emptyList()
+        }
         val nonHodPeers = db.birthdayDao().getPeers(department, null, groupId, birthdayId)
             .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != phoneNumber && it.isHod == false }
             .shuffled().take(MAX_STAFF_PEERS)
@@ -131,27 +140,29 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
     private fun loadSentPeers(prefs: SharedPreferences) {
         val sentSet = prefs.getStringSet(PREF_SENT_PEERS, emptySet()) ?: emptySet()
+        sentPeers.clear()
         sentSet.forEach { entry ->
             val parts = entry.split("|")
-            if (parts.size == 2) {
-                val (phoneNumber, birthdayId) = parts
-                sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add(birthdayId)
+            if (parts.size == 2 || parts.size == 3) {
+                val phoneNumber = parts[0]
+                val birthdayId = parts[1]
+                sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add(birthdayId + if (parts.size == 3) "|${parts[2]}" else "")
             }
         }
     }
 
     private fun hasSentPeer(peerKey: String): Boolean {
         val parts = peerKey.split("|")
-        if (parts.size != 2) return false
-        val (phoneNumber, birthdayId) = parts
-        return sentPeers[phoneNumber]?.contains(birthdayId) == true
+        if (parts.size != 3) return false
+        val (phoneNumber, birthdayId, year) = parts
+        return sentPeers[phoneNumber]?.contains("$birthdayId|$year") == true
     }
 
     private fun markPeerAsSent(peerKey: String, prefs: SharedPreferences) {
         val parts = peerKey.split("|")
-        if (parts.size != 2) return
-        val (phoneNumber, birthdayId) = parts
-        sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add(birthdayId)
+        if (parts.size != 3) return
+        val (phoneNumber, birthdayId, year) = parts
+        sentPeers.getOrPut(phoneNumber) { mutableSetOf() }.add("$birthdayId|$year")
         val updatedSet = sentPeers.entries.flatMap { (phone, ids) -> ids.map { "$phone|$it" } }.toSet()
         prefs.edit().putStringSet(PREF_SENT_PEERS, updatedSet).apply()
     }
