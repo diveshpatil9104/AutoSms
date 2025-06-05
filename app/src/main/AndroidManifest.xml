@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.autowish">
 
-    <!-- Required permissions -->
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <application
         android:allowBackup="true"
@@ -35,21 +37,30 @@
             </intent-filter>
         </activity>
 
-        <!-- Boot Receiver for rescheduling birthday checks -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" /> <!-- For some devices -->
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 
-        <!-- Alarm Receiver -->
         <receiver
             android:name=".BirthdayAlarmReceiver"
             android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.autowish.PEER_SMS" />
+                <action android:name="com.example.autowish.RETRY_FAILED_SMS" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".SmsSentService"
             android:exported="false" />
+
     </application>
 </manifest>

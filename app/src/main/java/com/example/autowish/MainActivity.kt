@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.work.WorkManager
 import com.example.autowish.ui.theme.AutoWishTheme
 
 class MainActivity : ComponentActivity() {
@@ -58,7 +59,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.SEND_SMS,
             Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.ACCESS_NETWORK_STATE
+            Manifest.permission.ACCESS_NETWORK_STATE,
+            Manifest.permission.READ_PHONE_STATE // Added for SIM validation
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.SCHEDULE_EXACT_ALARM)
@@ -90,6 +92,9 @@ class MainActivity : ComponentActivity() {
         } else {
             AlarmUtils.scheduleDailyAlarm(this)
         }
+
+        // Initialize WorkManager
+        WorkManager.getInstance(this)
 
         // Compose content
         setContent {
