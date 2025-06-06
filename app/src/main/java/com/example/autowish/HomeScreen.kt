@@ -121,19 +121,22 @@ fun HomeScreen(navController: NavController) {
             errorMessage = null
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    db.birthdayDao().deleteAll()
                     val entries = parseCsv(context, uri)
+                    db.birthdayDao().deleteAll()
                     entries.forEach { db.birthdayDao().insert(it) }
                     updateBirthdays()
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("${entries.size} birthdays imported!")
+                            snackbarHostState.showSnackbar("${entries.size} birthdays imported successfully!")
                         }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        errorMessage = "Failed to import CSV: ${e.message}"
+                        errorMessage = "CSV import failed: ${e.message}"
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("CSV import failed: ${e.message}")
+                        }
                     }
                 } finally {
                     withContext(Dispatchers.Main) {
@@ -164,12 +167,15 @@ fun HomeScreen(navController: NavController) {
                     AlarmUtils.scheduleDailyAlarm(context)
                     withContext(Dispatchers.Main) {
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("$insertedCount birthdays merged!")
+                            snackbarHostState.showSnackbar("$insertedCount birthdays merged successfully!")
                         }
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        errorMessage = "Failed to merge CSV: ${e.message}"
+                        errorMessage = "CSV merge failed: ${e.message}"
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("CSV merge failed: ${e.message}")
+                        }
                     }
                 } finally {
                     withContext(Dispatchers.Main) {

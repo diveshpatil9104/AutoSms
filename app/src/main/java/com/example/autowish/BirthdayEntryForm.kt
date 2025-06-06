@@ -106,7 +106,7 @@ fun BirthdayEntryForm(
                     value = phone,
                     onValueChange = {
                         phone = it
-                        phoneError = if (!it.matches(Regex("\\d{10,25}"))) "Phone number must be 10-25 digits" else null
+                        phoneError = if (!it.matches(Regex("^\\d{10}$"))) "Phone number must be exactly 10 digits" else null
                     },
                     label = { Text("Phone Number") },
                     modifier = Modifier.fillMaxWidth(),
@@ -292,7 +292,7 @@ fun BirthdayEntryForm(
             TextButton(
                 onClick = {
                     nameError = if (name.isBlank()) "Name cannot be empty" else null
-                    phoneError = if (!phone.matches(Regex("\\d{10,25}"))) "Phone number must be 10-25 digits" else null
+                    phoneError = if (!phone.matches(Regex("^\\d{10}$"))) "Phone number must be exactly 10 digits" else null
                     birthDateError = validateBirthDate(birthDate)
                     groupIdError = if (groupId.isBlank()) "Group ID cannot be empty" else null
 
@@ -335,7 +335,7 @@ fun BirthdayEntryForm(
                             birthDate = birthDate!!.format(formatter),
                             personType = personType,
                             department = department,
-                            year = if (personType == "Student") year else null, // Ensure null for staff
+                            year = if (personType == "Student") year else null,
                             groupId = groupId,
                             isHod = if (personType == "Staff") isHod else false
                         )
@@ -392,7 +392,6 @@ fun BirthdayEntryForm(
     }
 }
 
-// Parse MM-dd to LocalDate with dummy year
 private fun parseInitialBirthDate(birthDate: String?): LocalDate? {
     return try {
         birthDate?.let {
@@ -403,7 +402,6 @@ private fun parseInitialBirthDate(birthDate: String?): LocalDate? {
     }
 }
 
-// Ensure valid month and day only
 private fun validateBirthDate(birthDate: LocalDate?): String? {
     if (birthDate == null) return "Birth date is required"
     val month = birthDate.monthValue

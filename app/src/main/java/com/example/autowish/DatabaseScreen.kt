@@ -62,12 +62,7 @@ fun DatabaseScreen(navController: NavController) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     val departments = listOf(
-        "Computer",
-        "ENTC",
-        "Civil",
-        "Mechanical",
-        "Electronics",
-        "Electronics & Comp"
+        "Computer", "ENTC", "Civil", "Mechanical", "Electronics", "Electronics & Comp"
     )
     val years = listOf("2nd", "3rd", "4th", "All")
 
@@ -113,21 +108,24 @@ fun DatabaseScreen(navController: NavController) {
             errorMessage = null
             coroutineScope.launch(Dispatchers.IO) {
                 try {
+                    val entries = parseCsv(context, uri)
                     db.birthdayDao().deleteAll()
-                    val entries = parseCsv(context, it)
                     entries.forEach { entry -> db.birthdayDao().insert(entry) }
                     val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("${entries.size} birthdays imported")
+                            snackbarHostState.showSnackbar("${entries.size} birthdays imported successfully")
                         }
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        errorMessage = "Failed to import CSV: ${e.message}"
+                        errorMessage = "CSV import failed: ${e.message}"
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("CSV import failed: ${e.message}")
+                        }
                         Log.e("DatabaseScreen", "Import error", e)
                     }
                 } finally {
@@ -144,7 +142,7 @@ fun DatabaseScreen(navController: NavController) {
             errorMessage = null
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val entries = parseCsv(context, it)
+                    val entries = parseCsv(context, uri)
                     var insertedCount = 0
                     entries.forEach { entry ->
                         val existing = db.birthdayDao().getByNameAndPhone(entry.name, entry.phoneNumber)
@@ -158,13 +156,16 @@ fun DatabaseScreen(navController: NavController) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
                         coroutineScope.launch {
-                            snackbarHostState.showSnackbar("$insertedCount birthdays merged")
+                            snackbarHostState.showSnackbar("$insertedCount birthdays merged successfully")
                         }
                     }
                     AlarmUtils.scheduleDailyAlarm(context)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        errorMessage = "Failed to merge CSV: ${e.message}"
+                        errorMessage = "CSV merge failed: ${e.message}"
+                        coroutineScope.launch {
+                            snackbarHostState.showSnackbar("CSV merge failed: ${e.message}")
+                        }
                         Log.e("DatabaseScreen", "Merge error", e)
                     }
                 } finally {
@@ -529,7 +530,7 @@ fun DatabaseScreen(navController: NavController) {
             title = { Text("Delete Filtered Entries") },
             text = {
                 Text(
-                    "Are you sure you want to delete all ${filterType?.lowercase() ?: "entries"} in $department${if (filterType == "Student" && year != "All") " ($year)" else ""}? This action cannot be undone."
+                    "Are you sure you want to delete all ${filterType.lowercase()} in $department${if (filterType == "Student" && year != "All") " ($year)" else ""}? This action cannot be undone."
                 )
             },
             confirmButton = {
@@ -772,12 +773,7 @@ fun EnhancedSearchBarSection(
     onSortOrderChange: (String) -> Unit
 ) {
     val departments = listOf(
-        "Computer",
-        "ENTC",
-        "Civil",
-        "Mechanical",
-        "Electronics",
-        "Electronics & Comp"
+        "Computer", "ENTC", "Civil", "Mechanical", "Electronics", "Electronics & Comp"
     )
 
     val years = listOf("All", "2nd", "3rd", "4th")
