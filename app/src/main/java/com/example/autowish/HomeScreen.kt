@@ -1,14 +1,18 @@
 package com.example.autowish
 
-import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -16,23 +20,24 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(navController: NavController) {
     val context = LocalContext.current
@@ -47,10 +52,10 @@ fun HomeScreen(navController: NavController) {
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Date formatter for MM-dd
+    // Date formatters
     val dateFormat = SimpleDateFormat("MM-dd", Locale.getDefault())
     val yearFormat = SimpleDateFormat("yyyy", Locale.getDefault())
-    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val fullDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
     // Function to update birthdays
     suspend fun updateBirthdays() {
@@ -64,21 +69,34 @@ fun HomeScreen(navController: NavController) {
             val allBirthdays = db.birthdayDao().getAll()
             hasData = allBirthdays.isNotEmpty()
 
+            // Today's birthdays
+            val todayList = allBirthdays
+                .filter { entry ->
+                    try {
+                        val parts = entry.birthDate.split("-")
+                        if (parts.size == 2) {
+                            val birthMMdd = "${parts[0]}-${parts[1]}"
+                            birthMMdd == todayMMdd
+                        } else false
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+
             // Upcoming birthdays (next 7 days, excluding today)
             val upcomingList = allBirthdays
                 .mapNotNull { entry ->
                     try {
-                        // Parse birth date as MM-dd
                         val parts = entry.birthDate.split("-")
                         if (parts.size == 2) {
                             val month = parts[0].toIntOrNull()
                             val day = parts[1].toIntOrNull()
-                            if (month != null && day != null) {
+                            val birthMMdd = "${parts[0]}-${parts[1]}"
+                            if (month != null && day != null && birthMMdd != todayMMdd) {
                                 val nextBirthday = Calendar.getInstance().apply {
                                     set(Calendar.MONTH, month - 1)
                                     set(Calendar.DAY_OF_MONTH, day)
                                     set(Calendar.YEAR, currentYear)
-                                    // If the birthday is today or has passed, use next year
                                     if (timeInMillis <= today.timeInMillis) {
                                         add(Calendar.YEAR, 1)
                                     }
@@ -87,11 +105,10 @@ fun HomeScreen(navController: NavController) {
                             } else null
                         } else null
                     } catch (e: Exception) {
-                        null // Skip invalid dates
+                        null
                     }
                 }
                 .filter { (_, birthTime) ->
-                    // Include birthdays from tomorrow to 7 days later
                     birthTime > today.timeInMillis && birthTime <= sevenDaysTime
                 }
                 .sortedBy { it.second }
@@ -99,6 +116,7 @@ fun HomeScreen(navController: NavController) {
                 .take(7)
 
             withContext(Dispatchers.Main) {
+                todayBirthdays = todayList
                 upcomingBirthdays = upcomingList
             }
         } catch (e: Exception) {
@@ -311,39 +329,41 @@ fun HomeScreen(navController: NavController) {
                     )
                 }
                 item {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                    Text(
+                        text = "Today's Birthdays",
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 22.sp
                         ),
+                        color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 8.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            .padding(bottom = 16.dp)
+                    )
+                }
+                item {
+                    if (todayBirthdays.isEmpty()) {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp)
                         ) {
                             Text(
-                                text = "Today's Birthdays",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 20.sp
-                                ),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = if (todayBirthdays.isEmpty()) {
-                                    "No birthdays today"
-                                } else {
-                                    "${todayBirthdays.size} birthday${if (todayBirthdays.size > 1) "s" else ""} today: ${todayBirthdays.joinToString { it.name }}"
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                text = "No birthdays today",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                textAlign = TextAlign.Center
                             )
                         }
+                    } else {
+                        HeroBirthdayCarousel(birthdays = todayBirthdays)
                     }
                 }
                 item {
@@ -357,7 +377,7 @@ fun HomeScreen(navController: NavController) {
                 item {
                     Text(
                         text = "Upcoming Birthdays",
-                        style = MaterialTheme.typography.titleMedium.copy(
+                        style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 22.sp
                         ),
@@ -404,6 +424,7 @@ fun HomeScreen(navController: NavController) {
             }
         }
     }
+
 
     if (showCsvDialog) {
         AlertDialog(
@@ -455,5 +476,87 @@ fun HomeScreen(navController: NavController) {
             coroutineScope = coroutineScope,
             setErrorMessage = { errorMessage = it }
         )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
+    val pagerState = rememberPagerState(pageCount = { birthdays.size })
+    val currentPage by remember { derivedStateOf { pagerState.currentPage } }
+
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .padding(bottom = 16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        pageSpacing = 8.dp
+    ) { page ->
+        val entry = birthdays[page]
+        val isSelected = page == currentPage
+
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 3.dp else 3.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.primaryContainer
+            ),
+
+            modifier = Modifier.fillMaxSize()
+
+        )
+        {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "🎂",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                        .padding(6.dp)
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = entry.name,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Date: ${entry.birthDate}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "Dept: ${entry.department}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                    if (entry.year?.isNotEmpty() == true) {
+                        Text(
+                            text = "Year: ${entry.year}",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
+                    Text(
+                        text = "Phone: ${entry.phoneNumber}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
+        }
     }
 }

@@ -71,7 +71,7 @@ fun BirthdayCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
+            .padding(vertical = 4.dp , horizontal = 4.dp)
             .background(
                 if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                 else MaterialTheme.colorScheme.surface
@@ -79,7 +79,7 @@ fun BirthdayCard(
             .border(
                 width = if (showBorder) 2.dp else 0.dp,
                 color = if (showBorder) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(8.dp)
+                shape = RoundedCornerShape(12.dp)
             )
             .pointerInput(Unit) {
                 detectTapGestures(

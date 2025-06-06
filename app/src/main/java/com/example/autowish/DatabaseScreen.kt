@@ -1,19 +1,25 @@
 package com.example.autowish
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -22,22 +28,32 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.autowish.SmsUtils.showNotification
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.absoluteValue
+import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun DatabaseScreen(navController: NavController) {
     val context = LocalContext.current
@@ -64,14 +80,18 @@ fun DatabaseScreen(navController: NavController) {
     val departments = listOf(
         "Computer", "ENTC", "Civil", "Mechanical", "Electronics", "Electronics & Comp"
     )
-    val years = listOf("2nd", "3rd", "4th", "All")
+    val years = listOf("All", "2nd", "3rd", "4th")
 
     // Load birthdays
     LaunchedEffect(searchQuery, filterType, department, year, sortOrder) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 val effectiveYear = if (filterType == "Student" && year != "All") year else null
-                val list = db.birthdayDao().getByDepartmentAndYear(department, effectiveYear, if (filterType == "All") null else filterType)
+                val list = db.birthdayDao().getByDepartmentAndYear(
+                    department,
+                    effectiveYear,
+                    if (filterType == "All") null else filterType
+                )
                 Log.d("DatabaseScreen", "Filter: $filterType, Dept: $department, Year: $effectiveYear, Initial size: ${list.size}")
 
                 val filteredList = if (searchQuery.isNotEmpty()) {
@@ -111,7 +131,11 @@ fun DatabaseScreen(navController: NavController) {
                     val entries = parseCsv(context, uri)
                     db.birthdayDao().deleteAll()
                     entries.forEach { entry -> db.birthdayDao().insert(entry) }
-                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                    val newList = db.birthdayDao().getByDepartmentAndYear(
+                        department,
+                        if (filterType == "Student" && year != "All") year else null,
+                        if (filterType == "All") null else filterType
+                    )
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
@@ -151,7 +175,11 @@ fun DatabaseScreen(navController: NavController) {
                             insertedCount++
                         }
                     }
-                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                    val newList = db.birthdayDao().getByDepartmentAndYear(
+                        department,
+                        if (filterType == "Student" && year != "All") year else null,
+                        if (filterType == "All") null else filterType
+                    )
                     withContext(Dispatchers.Main) {
                         birthdayList = newList
                         hasData = newList.isNotEmpty()
@@ -297,7 +325,11 @@ fun DatabaseScreen(navController: NavController) {
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
                                     selectedItems.forEach { id -> db.birthdayDao().deleteById(id) }
-                                    val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                                    val newList = db.birthdayDao().getByDepartmentAndYear(
+                                        department,
+                                        if (filterType == "Student" && year != "All") year else null,
+                                        if (filterType == "All") null else filterType
+                                    )
                                     withContext(Dispatchers.Main) {
                                         birthdayList = newList
                                         hasData = newList.isNotEmpty()
@@ -488,7 +520,11 @@ fun DatabaseScreen(navController: NavController) {
                         coroutineScope.launch(Dispatchers.IO) {
                             try {
                                 db.birthdayDao().deleteAll()
-                                val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                                val newList = db.birthdayDao().getByDepartmentAndYear(
+                                    department,
+                                    if (filterType == "Student" && year != "All") year else null,
+                                    if (filterType == "All") null else filterType
+                                )
                                 withContext(Dispatchers.Main) {
                                     birthdayList = newList
                                     hasData = newList.isNotEmpty()
@@ -545,7 +581,11 @@ fun DatabaseScreen(navController: NavController) {
                                     if (filterType == "Student" && year != "All") year else null,
                                     if (filterType == "All") null else filterType
                                 )
-                                val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                                val newList = db.birthdayDao().getByDepartmentAndYear(
+                                    department,
+                                    if (filterType == "Student" && year != "All") year else null,
+                                    if (filterType == "All") null else filterType
+                                )
                                 withContext(Dispatchers.Main) {
                                     birthdayList = newList
                                     hasData = newList.isNotEmpty()
@@ -606,7 +646,11 @@ fun DatabaseScreen(navController: NavController) {
                 coroutineScope.launch(Dispatchers.IO) {
                     try {
                         db.birthdayDao().insert(entry)
-                        val newList = db.birthdayDao().getByDepartmentAndYear(department, if (filterType == "Student" && year != "All") year else null, if (filterType == "All") null else filterType)
+                        val newList = db.birthdayDao().getByDepartmentAndYear(
+                            department,
+                            if (filterType == "Student" && year != "All") year else null,
+                            if (filterType == "All") null else filterType
+                        )
                         withContext(Dispatchers.Main) {
                             birthdayList = newList
                             hasData = newList.isNotEmpty()
@@ -741,7 +785,7 @@ fun BirthdayListItem(
                 .fillMaxWidth()
                 .combinedClickable(
                     interactionSource = interactionSource,
-                    indication = LocalIndication.current,
+                    indication = null,
                     onClick = {
                         if (isSelectionMode) onClick()
                     },
@@ -775,12 +819,10 @@ fun EnhancedSearchBarSection(
     val departments = listOf(
         "Computer", "ENTC", "Civil", "Mechanical", "Electronics", "Electronics & Comp"
     )
-
     val years = listOf("All", "2nd", "3rd", "4th")
-
     var sortMenuExpanded by remember { mutableStateOf(false) }
-    var departmentExpanded by remember { mutableStateOf(false) }
-    var yearExpanded by remember { mutableStateOf(false) }
+    var showDepartmentPicker by remember { mutableStateOf(false) }
+    var showYearPicker by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
@@ -884,89 +926,157 @@ fun EnhancedSearchBarSection(
             }
         }
 
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
         ) {
-            ExposedDropdownMenuBox(
-                expanded = departmentExpanded,
-                onExpandedChange = { departmentExpanded = !departmentExpanded },
-                modifier = Modifier
-                    .width(200.dp) // Fixed width for smaller box
-            ) {
-                OutlinedTextField(
-                    value = department,
-                    onValueChange = {},
-                    label = { Text("Department", style = MaterialTheme.typography.bodySmall) }, // Smaller font
-                    readOnly = true,
-                    modifier = Modifier
-                        .menuAnchor()
-                        .width(200.dp) // Match box width
-                        .padding(horizontal = 4.dp), // Compact padding
-                    textStyle = MaterialTheme.typography.bodySmall, // Smaller text
-                    trailingIcon = {
-                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded)
-                    }
+            FilterChip(
+                selected = true,
+                onClick = { showDepartmentPicker = true },
+                label = { Text("Dept: $department") },
+                trailingIcon = {
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Department")
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
-                ExposedDropdownMenu(
-                    expanded = departmentExpanded,
-                    onDismissRequest = { departmentExpanded = false },
-                    modifier = Modifier
-                        .width(200.dp) // Match text field width
-                        .heightIn(max = 200.dp) // Limit dropdown height
-                ) {
-                    departments.forEach { dept ->
-                        DropdownMenuItem(
-                            text = { Text(dept, style = MaterialTheme.typography.bodySmall) }, // Smaller text
-                            onClick = {
-                                onDepartmentChange(dept)
-                                departmentExpanded = false
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp) // Compact padding
-                        )
+            )
+
+            FilterChip(
+                selected = true,
+                onClick = { showYearPicker = true },
+                label = { Text("Year: $year") },
+                trailingIcon = {
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Year")
+                },
+                enabled = filterType == "Student",
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            )
+        }
+        Divider(
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            thickness = 1.dp,
+
+        )
+
+        if (showDepartmentPicker) {
+            SimpleListPicker(
+                items = departments,
+                selectedItem = department,
+                onItemSelected = { onDepartmentChange(it) },
+                title = "Select Department",
+                onDismiss = { showDepartmentPicker = false }
+            )
+        }
+
+        if (showYearPicker) {
+            SimpleListPicker(
+                items = years,
+                selectedItem = year,
+                onItemSelected = { onYearChange(it) },
+                title = "Select Year",
+                onDismiss = { showYearPicker = false }
+            )
+        }
+    }
+}
+
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SimpleListPicker(
+    items: List<String>,
+    selectedItem: String,
+    onItemSelected: (String) -> Unit,
+    title: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hapticFeedback = LocalHapticFeedback.current
+    var tempSelectedItem by remember { mutableStateOf(selectedItem) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 32.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                TextButton(
+                    onClick = {
+                        onItemSelected(tempSelectedItem)
+                        onDismiss()
                     }
+                ) {
+                    Text("Done", color = MaterialTheme.colorScheme.primary)
                 }
             }
 
-            ExposedDropdownMenuBox(
-                expanded = yearExpanded,
-                onExpandedChange = { yearExpanded = !yearExpanded },
+            LazyColumn(
                 modifier = Modifier
-                    .width(200.dp) // Fixed width for smaller box
+                    .fillMaxWidth()
+                    .heightIn(max = 250.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                OutlinedTextField(
-                    value = year,
-                    onValueChange = {},
-                    label = { Text("Year", style = MaterialTheme.typography.bodySmall) }, // Smaller font
-                    readOnly = true,
-                    modifier = Modifier
-                        .menuAnchor()
-                        .width(100.dp) // Match box width
-                        .padding(horizontal = 4.dp), // Compact padding
-                    textStyle = MaterialTheme.typography.bodySmall, // Smaller text
-                    trailingIcon = {
-                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearExpanded)
-                    },
-                    enabled = filterType == "Student"
-                )
-                ExposedDropdownMenu(
-                    expanded = yearExpanded,
-                    onDismissRequest = { yearExpanded = false },
-                    modifier = Modifier
-                        .width(200.dp) // Match text field width
-                        .heightIn(max = 200.dp) // Limit dropdown height
-                ) {
-                    years.forEach { yr ->
-                        DropdownMenuItem(
-                            text = { Text(yr, style = MaterialTheme.typography.bodySmall) }, // Smaller text
-                            onClick = {
-                                onYearChange(yr)
-                                yearExpanded = false
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp) // Compact padding
+                items(items) { item ->
+                    val isSelected = item == tempSelectedItem
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                else MaterialTheme.colorScheme.surface,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                tempSelectedItem = item
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = item,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = if (isSelected) 16.sp else 14.sp
+                            ),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface
                         )
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = "Selected",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
