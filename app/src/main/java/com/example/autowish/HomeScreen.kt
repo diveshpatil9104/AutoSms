@@ -20,10 +20,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -319,15 +321,22 @@ fun HomeScreen(navController: NavController) {
                             }
                         }
                     }
+
+
+
                 }
+
+
                 item {
                     Divider(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 16.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
                     )
                 }
+                item { Spacer(modifier = Modifier.height(8.dp)) }
+
                 item {
                     Text(
                         text = "Today's Birthdays",
@@ -371,7 +380,7 @@ fun HomeScreen(navController: NavController) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 16.dp),
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
                     )
                 }
                 item {
@@ -499,60 +508,87 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
 
         Card(
             shape = RoundedCornerShape(24.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 3.dp else 3.dp),
+            elevation = CardDefaults.cardElevation(4.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.primaryContainer
+                containerColor = MaterialTheme.colorScheme.primaryContainer
             ),
-
             modifier = Modifier.fillMaxSize()
-
-        )
-        {
-            Row(
+        ) {
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "🎂",
-                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 32.sp),
+                // 🎉 Background image (birthday-themed)
+                Image(
+                    painter = painterResource(id = R.drawable.birthday2),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                        .padding(6.dp)
+                        .fillMaxSize()
+                        .alpha(0.10f)
+//                        .offset(y = 16.dp) // Shift up to align bottom with card
+                        .clip(RoundedCornerShape(24.dp))
+                        .align(Alignment.BottomCenter)
                 )
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    // Name — bigger
                     Text(
                         text = entry.name,
                         style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 22.sp,
+                            letterSpacing = 1.5.sp
                         ),
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.primary
                     )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Birth date
                     Text(
                         text = "Date: ${entry.birthDate}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            letterSpacing = 0.5.sp
+                        ),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
-                    Text(
-                        text = "Dept: ${entry.department}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                    )
-                    if (entry.year?.isNotEmpty() == true) {
-                        Text(
-                            text = "Year: ${entry.year}",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Department and Year in one line
+                    val departmentAndYear = buildString {
+                        append(entry.department)
+                        if (!entry.year.isNullOrBlank()) {
+                            append("    ") // Add spacing between department and year
+                            append(entry.year)
+                        }
                     }
+
+                    Text(
+                        text = departmentAndYear,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            letterSpacing = 0.5.sp
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Phone number
                     Text(
                         text = "Phone: ${entry.phoneNumber}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            letterSpacing = 0.5.sp
+                        ),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                 }

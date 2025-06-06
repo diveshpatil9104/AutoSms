@@ -72,6 +72,7 @@ dependencies {
     implementation ("androidx.compose.foundation:foundation:1.7.0")
 // CSV Parser
     implementation ("com.opencsv:opencsv:5.8")
+    implementation("io.coil-kt:coil-compose:2.4.0")
 // Jetpack Compose ViewModel support
     implementation ("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     // Jetpack Compose BOM (recommended way)
