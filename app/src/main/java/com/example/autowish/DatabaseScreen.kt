@@ -790,7 +790,7 @@ fun BirthdayListItem(
                     tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
-                        .size(28.dp)
+                        .size(33.dp)
                         .scale(iconScale)
                 )
             },

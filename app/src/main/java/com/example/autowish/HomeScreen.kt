@@ -3,6 +3,9 @@ package com.example.autowish
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -16,12 +19,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -269,62 +274,13 @@ fun HomeScreen(navController: NavController) {
                             .fillMaxWidth()
                     )
                 }
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            ),
-                            modifier = Modifier
-                                .size(110.dp)
-                                .padding(end = 8.dp)
-                        ) {
-                            IconButton(
-                                onClick = { showCsvDialog = true },
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.upload),
-                                    contentDescription = "Upload CSV",
-                                    modifier = Modifier.size(50.dp),
-                                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
-                                )
-                            }
-                        }
-                        Card(
-                            shape = RoundedCornerShape(16.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            ),
-                            modifier = Modifier
-                                .size(110.dp)
-                                .padding(start = 8.dp)
-                        ) {
-                            IconButton(
-                                onClick = { showForm = true },
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "Add Entry",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(50.dp)
-                                )
-                            }
-                        }
+
+                    item {
+                        UploadAddCards(
+                            onShowCsvDialog = { showCsvDialog = true },
+                            onShowForm = { showForm = true }
+                        )
                     }
-
-
-
-                }
 
 
                 item {
@@ -488,6 +444,7 @@ fun HomeScreen(navController: NavController) {
     }
 }
 
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
@@ -505,6 +462,14 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
     ) { page ->
         val entry = birthdays[page]
         val isSelected = page == currentPage
+        val iconScale by animateFloatAsState(
+            targetValue = if (isSelected) 1f else 0.8f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessLow
+            ),
+            label = "IconScale"
+        )
 
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -526,11 +491,41 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
                     modifier = Modifier
                         .fillMaxSize()
                         .alpha(0.10f)
-//                        .offset(y = 16.dp) // Shift up to align bottom with card
                         .clip(RoundedCornerShape(24.dp))
                         .align(Alignment.BottomCenter),
-                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
                 )
+
+                // Icon tag for Student, Staff, or HOD
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .offset(x = (-16).dp, y = 16.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .align(Alignment.TopEnd),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(
+                            id = when {
+                                entry.personType == "Staff" && entry.isHod -> R.drawable.hod
+                                entry.personType == "Staff" -> R.drawable.staff
+                                else -> R.drawable.student
+                            }
+                        ),
+                        contentDescription = when {
+                            entry.personType == "Staff" && entry.isHod -> "HOD"
+                            entry.personType == "Staff" -> "Staff"
+                            else -> "Student"
+                        },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .scale(iconScale),
+                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
+                    )
+                }
 
                 Column(
                     modifier = Modifier
@@ -593,6 +588,62 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     )
                 }
+            }
+        }
+    }
+}@Composable
+fun UploadAddCards(
+    onShowCsvDialog: () -> Unit,
+    onShowForm: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ),
+            modifier = Modifier
+                .size(width = 140.dp, height = 110.dp)
+                .padding(end = 6.dp)
+        ) {
+            IconButton(
+                onClick = { onShowCsvDialog() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.upload),
+                    contentDescription = "Upload CSV",
+                    modifier = Modifier.size(55.dp),
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ),
+            modifier = Modifier
+                .size(width = 140.dp, height = 110.dp)
+                .padding(start = 6.dp)
+        ) {
+            IconButton(
+                onClick = { onShowForm() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Add Entry",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(55.dp)
+                )
             }
         }
     }

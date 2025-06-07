@@ -2,10 +2,14 @@ package com.example.autowish
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,6 +32,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.ripple
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 
 @Composable
 fun BottomNavigationBar(
@@ -51,45 +61,21 @@ fun BottomNavigationBar(
         )
     }
 }
-
 @Composable
 fun BirthdayCard(
     entry: BirthdayEntry,
-    isSelected: Boolean = false,
-    onClick: () -> Unit = {},
-    onLongPress: () -> Unit = {}
+    onClick: () -> Unit = {}
 ) {
-    var showBorder by remember { mutableStateOf(false) }
-
-    LaunchedEffect(showBorder) {
-        if (showBorder) {
-            delay(300)
-            showBorder = false
-        }
-    }
+    val interactionSource = remember { MutableInteractionSource() }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp , horizontal = 4.dp)
-            .background(
-                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                else MaterialTheme.colorScheme.surface
-            )
-            .border(
-                width = if (showBorder) 2.dp else 0.dp,
-                color = if (showBorder) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onLongPress = {
-                        showBorder = true
-                        onLongPress()
-                    }
-                )
-            },
+            .padding(vertical = 4.dp, horizontal = 4.dp)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = ripple()
+            ) { onClick() },
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -99,14 +85,44 @@ fun BirthdayCard(
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Circular image container with dynamic drawable icon
+            Box(
+                modifier = Modifier
+                    .size(55.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(
+                        id = when {
+                            entry.personType == "Staff" && entry.isHod -> R.drawable.hod
+                            entry.personType == "Staff" -> R.drawable.staff
+                            else -> R.drawable.student
+                        }
+                    ),
+                    contentDescription = when {
+                        entry.personType == "Staff" && entry.isHod -> "HOD"
+                        entry.personType == "Staff" -> "Staff"
+                        else -> "Student"
+                    },
+                    contentScale = ContentScale.Fit,
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onPrimaryContainer),
+                    modifier = Modifier.size(30.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = entry.name,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp),
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold
+                    ),
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = "Phone No. : ${entry.phoneNumber}",
+                    text = "Phone No.: ${entry.phoneNumber}",
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -116,7 +132,12 @@ fun BirthdayCard(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
                 Text(
-                    text = "Type: ${entry.personType}",
+                    text = buildString {
+                        append("${entry.department}")
+                        if (entry.personType == "Student" && !entry.year.isNullOrBlank()) {
+                            append("    ${entry.year}")
+                        }
+                    },
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -124,7 +145,6 @@ fun BirthdayCard(
         }
     }
 }
-
 
 fun parseCsv(context: Context, uri: Uri): List<BirthdayEntry> {
     val entries = mutableListOf<BirthdayEntry>()
