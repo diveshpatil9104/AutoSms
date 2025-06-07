@@ -1,5 +1,6 @@
 package com.example.autowish
 
+
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -16,7 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -58,10 +59,10 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = Color.TRANSPARENT
 
         // Adjust icon color based on theme
-        val isDarkTheme = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val isDarkThemeInitial = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val insetsController = WindowInsetsControllerCompat(window, window.decorView)
-        insetsController.isAppearanceLightStatusBars = !isDarkTheme
-        insetsController.isAppearanceLightNavigationBars = !isDarkTheme
+        insetsController.isAppearanceLightStatusBars = !isDarkThemeInitial
+        insetsController.isAppearanceLightNavigationBars = !isDarkThemeInitial
 
         // Request permissions
         val permissions = mutableListOf(
@@ -109,12 +110,16 @@ class MainActivity : ComponentActivity() {
 
         // Compose content
         setContent {
-            AutoWishTheme {
+            var isDarkTheme by remember { mutableStateOf(isDarkThemeInitial) }
+            AutoWishTheme(darkTheme = isDarkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AppNavigation()
+                    AppNavigation(
+                        isDarkTheme = isDarkTheme,
+                        onThemeToggle = { isDarkTheme = !isDarkTheme }
+                    )
                 }
             }
         }
@@ -122,10 +127,19 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun AppNavigation() {
+fun AppNavigation(
+    isDarkTheme: Boolean,
+    onThemeToggle: () -> Unit
+) {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "home") {
-        composable("home") { HomeScreen(navController) }
+        composable("home") {
+            HomeScreen(
+                navController = navController,
+                isDarkTheme = isDarkTheme,
+                onThemeToggle = onThemeToggle
+            )
+        }
         composable("Database") { DatabaseScreen(navController) }
     }
 }

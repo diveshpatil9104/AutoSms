@@ -1,25 +1,46 @@
 package com.example.autowish
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Nightlight
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.*
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.random.Random
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.withInfiniteAnimationFrameMillis
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Nightlight
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,6 +51,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -46,7 +68,7 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun HomeScreen(navController: NavController) {
+fun HomeScreen(navController: NavController, isDarkTheme: Boolean, onThemeToggle: () -> Unit) {
     val context = LocalContext.current
     val db = BirthdayDatabase.getInstance(context)
     var todayBirthdays by remember { mutableStateOf<List<BirthdayEntry>>(emptyList()) }
@@ -224,13 +246,24 @@ fun HomeScreen(navController: NavController) {
                         )
                     )
                 },
+                actions = {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        ThemeSwitch(
+                            isDarkTheme = isDarkTheme,
+                            onThemeToggle = onThemeToggle
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
                     titleContentColor = MaterialTheme.colorScheme.primary
                 ),
                 modifier = Modifier
                     .background(Color.Transparent)
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             )
         },
         bottomBar = {
@@ -261,9 +294,7 @@ fun HomeScreen(navController: NavController) {
                     .padding(horizontal = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                item {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                item { Spacer(modifier = Modifier.height(16.dp)) }
                 item {
                     Text(
                         text = "Upload CSV file or add data manually",
@@ -274,15 +305,12 @@ fun HomeScreen(navController: NavController) {
                             .fillMaxWidth()
                     )
                 }
-
-                    item {
-                        UploadAddCards(
-                            onShowCsvDialog = { showCsvDialog = true },
-                            onShowForm = { showForm = true }
-                        )
-                    }
-
-
+                item {
+                    UploadAddCards(
+                        onShowCsvDialog = { showCsvDialog = true },
+                        onShowForm = { showForm = true }
+                    )
+                }
                 item {
                     Divider(
                         modifier = Modifier
@@ -292,7 +320,6 @@ fun HomeScreen(navController: NavController) {
                     )
                 }
                 item { Spacer(modifier = Modifier.height(8.dp)) }
-
                 item {
                     Text(
                         text = "Today's Birthdays",
@@ -390,7 +417,6 @@ fun HomeScreen(navController: NavController) {
         }
     }
 
-
     if (showCsvDialog) {
         AlertDialog(
             onDismissRequest = { showCsvDialog = false },
@@ -444,6 +470,115 @@ fun HomeScreen(navController: NavController) {
     }
 }
 
+@Composable
+fun ThemeSwitch(
+    isDarkTheme: Boolean,
+    onThemeToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val thumbOffset by animateFloatAsState(
+        targetValue = if (isDarkTheme) 24f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "ThumbOffset"
+    )
+    val trackColor by animateColorAsState(
+        targetValue = if (isDarkTheme) MaterialTheme.colorScheme.secondary
+        else MaterialTheme.colorScheme.primary,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "TrackColor"
+    )
+    val rotation by animateFloatAsState(
+        targetValue = if (isDarkTheme) 360f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "IconRotation"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isDarkTheme) 1f else 1f,
+        animationSpec = keyframes {
+            durationMillis = 300
+            0.8f at 0 with LinearEasing
+            1.2f at 150 with LinearEasing
+            1f at 300 with LinearEasing
+        },
+        label = "IconScale"
+    )
+
+    // Particle effect for transition
+    val infiniteTransition = rememberInfiniteTransition(label = "ParticleAnimation")
+    val particleAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "ParticleAlpha"
+    )
+
+    // Resolve color outside Canvas
+    val particleColor = MaterialTheme.colorScheme.onPrimaryContainer
+
+    Box(
+        modifier = Modifier
+            .size(width = 48.dp, height = 24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(trackColor)
+            .clickable(onClick = onThemeToggle),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Particle effect (small stars/dots)
+        if (particleAlpha > 0f) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(x = (thumbOffset + 12f).dp, y = 12.dp)
+            ) {
+                drawCircle(
+                    color = particleColor.copy(alpha = particleAlpha * 0.5f),
+                    radius = 2.dp.toPx(),
+                    center = center.copy(x = center.x + 8.dp.toPx(), y = center.y - 4.dp.toPx())
+                )
+                drawCircle(
+                    color = particleColor.copy(alpha = particleAlpha * 0.3f),
+                    radius = 1.5.dp.toPx(),
+                    center = center.copy(x = center.x - 6.dp.toPx(), y = center.y + 4.dp.toPx())
+                )
+            }
+        }
+
+        // Thumb with icon
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset.dp)
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (isDarkTheme) Icons.Default.Nightlight else Icons.Default.WbSunny,
+                contentDescription = "Toggle ${if (isDarkTheme) "light" else "dark"} mode",
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer {
+                        rotationZ = rotation
+                        scaleX = scale
+                        scaleY = scale
+                    }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -591,7 +726,9 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
             }
         }
     }
-}@Composable
+}
+
+@Composable
 fun UploadAddCards(
     onShowCsvDialog: () -> Unit,
     onShowForm: () -> Unit
