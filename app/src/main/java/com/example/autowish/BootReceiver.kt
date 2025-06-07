@@ -87,15 +87,30 @@ class BootReceiver : BroadcastReceiver() {
                 }
 
                 val peers = when (birthday.personType) {
-                    "Student" -> db.birthdayDao().getPeers(birthday.department, birthday.year, birthday.groupId, birthday.id)
-                        .filter { it.personType == "Student" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == false }
+                    "Student" -> db.birthdayDao().getPeers(birthday.department, birthday.year, birthday.groupId, -1)
+                        .filter {
+                            it.personType == "Student" &&
+                                    it.phoneNumber.matches(Regex("\\d{10,25}")) &&
+                                    it.phoneNumber != birthday.phoneNumber &&
+                                    it.isHod == false
+                        }
                         .let { if (it.size <= MAX_STUDENT_PEERS) it else it.shuffled().take(MAX_STUDENT_PEERS) }
                     "Staff" -> {
-                        val nonHodPeers = db.birthdayDao().getPeers(birthday.department, null, birthday.groupId, birthday.id)
-                            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == false }
+                        val nonHodPeers = db.birthdayDao().getPeers(birthday.department, null, birthday.groupId, -1)
+                            .filter {
+                                it.personType == "Staff" &&
+                                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
+                                        it.phoneNumber != birthday.phoneNumber &&
+                                        it.isHod == false
+                            }
                             .shuffled().take(MAX_STAFF_PEERS)
-                        val hodPeers = db.birthdayDao().getHodByDepartment(birthday.department, birthday.id)
-                            .filter { it.personType == "Staff" && it.phoneNumber.matches(Regex("\\d{10,25}")) && it.phoneNumber != birthday.phoneNumber && it.isHod == true }
+                        val hodPeers = db.birthdayDao().getHodByDepartment(birthday.department, -1)
+                            .filter {
+                                it.personType == "Staff" &&
+                                        it.phoneNumber.matches(Regex("\\d{10,25}")) &&
+                                        it.phoneNumber != birthday.phoneNumber &&
+                                        it.isHod == true
+                            }
                             .shuffled().take(1)
                         (nonHodPeers + hodPeers).distinctBy { it.phoneNumber }
                     }

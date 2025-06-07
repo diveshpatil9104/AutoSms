@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -37,6 +38,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -699,6 +701,14 @@ fun BirthdayListItem(
     onLongPress: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val iconScale by animateFloatAsState(
+        targetValue = if (isSelected) 1f else 0.8f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "IconScale"
+    )
 
     Column {
         ListItem(
@@ -707,60 +717,48 @@ fun BirthdayListItem(
                     text = entry.name,
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 18.sp
+                        fontSize = 18.sp,
+                        letterSpacing = 0.5.sp
+
                     ),
                     color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.primary
                 )
+
             },
+
             supportingContent = {
+
                 Column {
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Text(
-                        text = "Phone No.: ${entry.phoneNumber}",
+                        text = "Phone No: ${entry.phoneNumber}",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Text(
                         text = "Birthday: ${entry.birthDate}",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Text(
-                        text = "Type: ${entry.personType}",
+                        text = buildString {
+                            append("Group ID: ${entry.groupId}")
+                            if (entry.personType == "Student" && !entry.year.isNullOrBlank()) {
+                                append("    Year: ${entry.year}")
+                            }
+                        },
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                         color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
                         else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
-                    Text(
-                        text = "Department: ${entry.department}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    if (entry.personType == "Student") {
-                        Text(
-                            text = "Year: ${entry.year}",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                    Text(
-                        text = "Group ID: ${entry.groupId}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    if (entry.personType == "Staff" && entry.isHod) {
-                        Text(
-                            text = "HOD: Yes",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
                 }
             },
             leadingContent = if (isSelected) {
@@ -773,6 +771,29 @@ fun BirthdayListItem(
                     )
                 }
             } else null,
+            trailingContent = {
+                val iconRes = when {
+                    entry.personType == "Staff" && entry.isHod -> R.drawable.hod  // HOD icon
+                    entry.personType == "Staff" -> R.drawable.staff              // Staff icon
+                    else -> R.drawable.student                                  // Student icon
+                }
+
+                val contentDesc = when {
+                    entry.personType == "Staff" && entry.isHod -> "HOD"
+                    entry.personType == "Staff" -> "Staff"
+                    else -> "Student"
+                }
+
+                Icon(
+                    painter = painterResource(id = iconRes),
+                    contentDescription = contentDesc,
+                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .scale(iconScale)
+                )
+            },
             colors = ListItemDefaults.colors(
                 containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surface,
@@ -801,7 +822,6 @@ fun BirthdayListItem(
         )
     }
 }
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EnhancedSearchBarSection(
