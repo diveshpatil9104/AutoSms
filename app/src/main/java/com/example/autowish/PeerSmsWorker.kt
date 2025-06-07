@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.work.*
-import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -16,7 +15,6 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     private val PREF_SENT_PEERS = "sentPeers"
     private val PREF_SMS_COUNT = "smsCount"
     private val PREF_SMS_TIMESTAMP = "smsTimestamp"
-    private val SMS_DELAY_MS = 36000L
     private val MAX_STUDENT_PEERS = 3
     private val MAX_STAFF_PEERS = 2
     private val SMS_LIMIT_PER_HOUR = 90
@@ -85,22 +83,9 @@ class PeerSmsWorker(context: Context, params: WorkerParameters) : CoroutineWorke
                                 timestamp = currentTime
                             ))
                         } else {
-                            val success = SmsUtils.sendWithRetries(applicationContext, peer.phoneNumber, name, personType, type, smsCount, prefs)
-                            if (success) {
-                                markPeerAsSent(peerKey, prefs)
-                                Log.d(TAG, "$type SMS sent successfully to ${peer.phoneNumber} with peerKey $peerKey")
-                            } else {
-                                db.smsQueueDao().insert(SmsQueueEntry(
-                                    phoneNumber = peer.phoneNumber,
-                                    name = name,
-                                    personType = personType,
-                                    type = type,
-                                    retryCount = 1,
-                                    timestamp = currentTime
-                                ))
-                            }
+                            SmsUtils.sendWithRetries(applicationContext, peer.phoneNumber, name, personType, type, smsCount, prefs)
+                            markPeerAsSent(peerKey, prefs)
                         }
-                        delay(SMS_DELAY_MS)
                     } else {
                         Log.d(TAG, "Skipping duplicate $type SMS to ${peer.phoneNumber} for birthday ID $birthdayId, year $currentYear (peerKey: $peerKey)")
                     }

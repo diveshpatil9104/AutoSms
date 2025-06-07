@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.delay
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -14,7 +13,6 @@ class RetryFailedSmsWorker(context: Context, params: WorkerParameters) : Corouti
     private val PREFS_NAME = "BirthdayPrefs"
     private val PREF_SMS_COUNT = "smsCount"
     private val PREF_SMS_TIMESTAMP = "smsTimestamp"
-    private val SMS_DELAY_MS = 36000L
     private val SMS_LIMIT_PER_HOUR = 90
     private val HOUR_MS = 3600000L
 
@@ -56,15 +54,9 @@ class RetryFailedSmsWorker(context: Context, params: WorkerParameters) : Corouti
             )
             if (success) {
                 db.smsQueueDao().deleteById(sms.id)
-                Log.d(TAG, "Sent queued ${sms.type} SMS to ${sms.phoneNumber}")
-            } else {
-                if (sms.retryCount < 5) {
-                    db.smsQueueDao().insert(sms.copy(retryCount = sms.retryCount + 1))
-                    db.smsQueueDao().deleteById(sms.id)
-                }
-                Log.w(TAG, "Failed to send queued ${sms.type} SMS to ${sms.phoneNumber}")
+            } else if (sms.retryCount >= 5) {
+                db.smsQueueDao().deleteById(sms.id)
             }
-            delay(SMS_DELAY_MS)
         }
 
         return if (db.smsQueueDao().getQueueSize() > 0) Result.retry() else Result.success()

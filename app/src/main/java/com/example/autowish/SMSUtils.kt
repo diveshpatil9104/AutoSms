@@ -15,8 +15,10 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.delay
-import java.util.*
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import java.util.Calendar
 import java.util.concurrent.atomic.AtomicInteger
 
 object SmsUtils {
@@ -28,8 +30,9 @@ object SmsUtils {
     private const val PREF_SMS_COUNT = "smsCount"
     private const val PREF_SMS_TIMESTAMP = "smsTimestamp"
     private const val HOUR_MS = 3600000L
+    private const val SMS_LIMIT_PER_HOUR = 90 // Added constant to match other classes
 
-    private fun validatePermissions(context: Context): Boolean {
+    fun validatePermissions(context: Context): Boolean {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "SEND_SMS permission not granted")
             showNotification(context, "Permission Error", "SEND_SMS permission not granted")
@@ -38,7 +41,7 @@ object SmsUtils {
         return true
     }
 
-    private fun isSimAvailable(context: Context): Boolean {
+    fun isSimAvailable(context: Context): Boolean {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "READ_PHONE_STATE permission not granted")
             showNotification(context, "Permission Error", "READ_PHONE_STATE permission not granted")
@@ -48,7 +51,7 @@ object SmsUtils {
         return subscriptionManager.activeSubscriptionInfoList?.isNotEmpty() == true
     }
 
-    private fun getSmsManager(context: Context): SmsManager {
+    fun getSmsManager(context: Context): SmsManager {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(SmsManager::class.java)
         } else {
@@ -56,7 +59,7 @@ object SmsUtils {
         }
     }
 
-    private fun createSentIntent(context: Context, phoneNumber: String, name: String, messageType: String): PendingIntent {
+    fun createSentIntent(context: Context, phoneNumber: String, name: String, messageType: String): PendingIntent {
         val intent = Intent(context, SmsSentService::class.java).apply {
             putExtra("phoneNumber", phoneNumber)
             putExtra("name", name)
@@ -80,63 +83,51 @@ object SmsUtils {
         prefs: SharedPreferences,
         retryCount: Int = 0
     ): Boolean {
-        if (!validatePermissions(context)) return false
-        if (!isSimAvailable(context)) {
-            Log.e(TAG, "No active SIM card")
-            showNotification(context, "SIM Error", "No active SIM card detected")
-            return false
-        }
+        if (!validatePermissions(context) || !isSimAvailable(context)) return false
         if (!phoneNumber.matches(Regex("\\d{10,25}"))) {
             Log.w(TAG, "Invalid phone number: $phoneNumber for $type SMS")
             return false
         }
         if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
-            Log.w(TAG, "Outside sending window (midnight to 4 PM) for $type SMS to $phoneNumber")
+            Log.w(TAG, "Outside sending window for $type SMS to $phoneNumber")
             return false
         }
 
-        var attempt = 0
-        var delayMs = 10000L
-        while (attempt < 3) {
-            try {
-                val message = when (type) {
-                    "direct" -> when (personType) {
-                        "Student" -> "Happy Birthday, $name! Wishing you a day filled with joy and a year full of success. -SSVPS College of Engineering, Dhule"
-                        "Staff" -> "Happy Birthday, $name! Wishing you good health, happiness, and continued success. -SSVPS College of Engineering, Dhule"
-                        else -> throw IllegalArgumentException("Invalid personType: $personType")
-                    }
-                    "peer" -> when (personType) {
-                        "Student" -> "Today is $name’s birthday! 🎉 Wish them well!"
-                        "Staff" -> "Today is $name’s birthday! 🎉 Send your wishes!"
-                        else -> throw IllegalArgumentException("Invalid personType: $personType")
-                    }
-                    "hod" -> "Today is $name’s birthday! 🎉 Send your wishes!"
-                    else -> throw IllegalArgumentException("Invalid type: $type")
-                }
-
-                val smsManager = getSmsManager(context)
-                val sentIntent = createSentIntent(context, phoneNumber, name, type)
-                smsManager.sendTextMessage(phoneNumber, null, message, sentIntent, null)
-                smsCount.incrementAndGet()
-                prefs.edit()
-                    .putInt(PREF_SMS_COUNT, smsCount.get())
-                    .putLong(PREF_SMS_TIMESTAMP, System.currentTimeMillis())
-                    .apply()
-                Log.d(TAG, "$type SMS sent to $phoneNumber on attempt ${attempt + 1} (SMS count: ${smsCount.get()})")
-                delay(SMS_QUEUE_DELAY_MS)
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed $type SMS to $phoneNumber on attempt ${attempt + 1}: ${e.message}")
-                attempt++
-                if (attempt < 3) {
-                    delay(delayMs)
-                    delayMs *= 2
-                } else {
-                    showNotification(context, "$type SMS Failed", "Failed to send $type SMS to $name after $retryCount retries")
-                }
-            }
+        if (smsCount.get() >= SMS_LIMIT_PER_HOUR) {
+            Log.w(TAG, "SMS limit reached, queuing $type SMS to $phoneNumber")
+            val db = BirthdayDatabase.getInstance(context)
+            db.smsQueueDao().insert(SmsQueueEntry(
+                phoneNumber = phoneNumber,
+                name = name,
+                personType = personType,
+                type = type,
+                retryCount = retryCount,
+                timestamp = System.currentTimeMillis()
+            ))
+            return false
         }
-        return false
+
+        val data = Data.Builder()
+            .putString("phoneNumber", phoneNumber)
+            .putString("name", name)
+            .putString("personType", personType)
+            .putString("type", type)
+            .putInt("retryCount", retryCount)
+            .build()
+
+        val smsWorkRequest = OneTimeWorkRequestBuilder<SmsSendWorker>()
+            .setInputData(data)
+            .setInitialDelay(SMS_QUEUE_DELAY_MS * smsCount.get(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+
+        WorkManager.getInstance(context).enqueue(smsWorkRequest)
+        smsCount.incrementAndGet()
+        prefs.edit()
+            .putInt(PREF_SMS_COUNT, smsCount.get())
+            .putLong(PREF_SMS_TIMESTAMP, System.currentTimeMillis())
+            .apply()
+        Log.d(TAG, "Enqueued $type SMS to $phoneNumber (SMS count: ${smsCount.get()})")
+        return true
     }
 
     suspend fun sendDirectSms(context: Context, phoneNumber: String, name: String, personType: String) {
@@ -144,7 +135,7 @@ object SmsUtils {
         val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
         val success = sendWithRetries(context, phoneNumber, name, personType, "direct", smsCount, prefs)
         if (!success) {
-            Log.w(TAG, "Failed to send direct SMS to $phoneNumber after retries")
+            Log.w(TAG, "Failed to enqueue direct SMS to $phoneNumber")
         }
     }
 
@@ -153,7 +144,7 @@ object SmsUtils {
         val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
         val success = sendWithRetries(context, phoneNumber, name, personType, "peer", smsCount, prefs)
         if (!success) {
-            Log.w(TAG, "Failed to send peer SMS to $phoneNumber after retries")
+            Log.w(TAG, "Failed to enqueue peer SMS to $phoneNumber")
         }
     }
 
@@ -162,7 +153,7 @@ object SmsUtils {
         val smsCount = AtomicInteger(prefs.getInt(PREF_SMS_COUNT, 0))
         val success = sendWithRetries(context, phoneNumber, name, "Staff", "hod", smsCount, prefs)
         if (!success) {
-            Log.w(TAG, "Failed to send HOD SMS to $phoneNumber after retries")
+            Log.w(TAG, "Failed to enqueue HOD SMS to $phoneNumber")
         }
     }
 

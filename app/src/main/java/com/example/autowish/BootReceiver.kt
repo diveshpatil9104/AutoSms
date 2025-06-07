@@ -16,7 +16,6 @@ class BootReceiver : BroadcastReceiver() {
     private val PREF_SENT_DATE = "lastSentDate"
     private val PREF_SMS_COUNT = "smsCount"
     private val PREF_SMS_TIMESTAMP = "smsTimestamp"
-    private val SMS_DELAY_MS = 36000L // 36 seconds
     private val MAX_STUDENT_PEERS = 3
     private val MAX_STAFF_PEERS = 2
     private val SMS_LIMIT_PER_HOUR = 90
@@ -56,8 +55,7 @@ class BootReceiver : BroadcastReceiver() {
             prefs.edit().putInt(PREF_SMS_COUNT, 0).putLong(PREF_SMS_TIMESTAMP, currentTime).apply()
         }
 
-        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        if (currentHour > 16) {
+        if (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) > 16) {
             Log.w(TAG, "Outside sending window (midnight to 4 PM), queuing for tomorrow")
             return
         }
@@ -85,21 +83,8 @@ class BootReceiver : BroadcastReceiver() {
                         timestamp = currentTime
                     ))
                 } else {
-                    val directSuccess = SmsUtils.sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", smsCount, prefs)
-                    if (directSuccess) {
-                        Log.d(TAG, "Direct SMS sent for ${birthday.name}")
-                    } else {
-                        db.smsQueueDao().insert(SmsQueueEntry(
-                            phoneNumber = birthday.phoneNumber,
-                            name = birthday.name,
-                            personType = birthday.personType,
-                            type = "direct",
-                            retryCount = 1,
-                            timestamp = currentTime
-                        ))
-                    }
+                    SmsUtils.sendWithRetries(context, birthday.phoneNumber, birthday.name, birthday.personType, "direct", smsCount, prefs)
                 }
-                delay(SMS_DELAY_MS)
 
                 val peers = when (birthday.personType) {
                     "Student" -> db.birthdayDao().getPeers(birthday.department, birthday.year, birthday.groupId, birthday.id)
@@ -129,21 +114,8 @@ class BootReceiver : BroadcastReceiver() {
                             timestamp = currentTime
                         ))
                     } else {
-                        val peerSuccess = SmsUtils.sendWithRetries(context, peer.phoneNumber, birthday.name, birthday.personType, type, smsCount, prefs)
-                        if (peerSuccess) {
-                            Log.d(TAG, "$type SMS sent for ${birthday.name} to ${peer.phoneNumber}")
-                        } else {
-                            db.smsQueueDao().insert(SmsQueueEntry(
-                                phoneNumber = peer.phoneNumber,
-                                name = birthday.name,
-                                personType = birthday.personType,
-                                type = type,
-                                retryCount = 1,
-                                timestamp = currentTime
-                            ))
-                        }
+                        SmsUtils.sendWithRetries(context, peer.phoneNumber, birthday.name, birthday.personType, type, smsCount, prefs)
                     }
-                    delay(SMS_DELAY_MS)
                 }
             }
 
@@ -169,24 +141,14 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        while (smsCount.get() < SMS_LIMIT_PER_HOUR) {
-            val queuedSms = db.smsQueueDao().getPendingSms(10)
-            if (queuedSms.isEmpty()) break
+        val queuedSms = db.smsQueueDao().getPendingSms(10)
+        if (queuedSms.isEmpty()) return
 
-            queuedSms.forEach { sms ->
-                if (smsCount.get() >= SMS_LIMIT_PER_HOUR) return@forEach
-                val success = SmsUtils.sendWithRetries(context, sms.phoneNumber, sms.name, sms.personType, sms.type, smsCount, prefs, sms.retryCount + 1)
-                if (success) {
-                    db.smsQueueDao().deleteById(sms.id)
-                    Log.d(TAG, "Sent queued ${sms.type} SMS to ${sms.phoneNumber}")
-                } else {
-                    if (sms.retryCount < 5) {
-                        db.smsQueueDao().insert(sms.copy(retryCount = sms.retryCount + 1))
-                        db.smsQueueDao().deleteById(sms.id)
-                    }
-                    Log.w(TAG, "Failed to send queued ${sms.type} SMS to ${sms.phoneNumber}")
-                }
-                delay(SMS_DELAY_MS)
+        queuedSms.forEach { sms ->
+            if (smsCount.get() >= SMS_LIMIT_PER_HOUR) return@forEach
+            val success = SmsUtils.sendWithRetries(context, sms.phoneNumber, sms.name, sms.personType, sms.type, smsCount, prefs, sms.retryCount + 1)
+            if (success) {
+                db.smsQueueDao().deleteById(sms.id)
             }
         }
     }

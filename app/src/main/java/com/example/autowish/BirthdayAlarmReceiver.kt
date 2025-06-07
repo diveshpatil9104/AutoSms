@@ -19,7 +19,7 @@ class BirthdayAlarmReceiver : BroadcastReceiver() {
     private val PREF_SENT_DATE = "lastSentDate"
     private val PREF_SMS_COUNT = "smsCount"
     private val PREF_SMS_TIMESTAMP = "smsTimestamp"
-    private val SMS_DELAY_MS = 36000L
+    private val SMS_DELAY_MS = 3000L
     private val SMS_LIMIT_PER_HOUR = 90
     private val HOUR_MS = 3600000L
     private val PEER_WORK_TAG = "peer_sms_work"

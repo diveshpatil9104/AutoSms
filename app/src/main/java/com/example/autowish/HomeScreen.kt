@@ -528,7 +528,8 @@ fun HeroBirthdayCarousel(birthdays: List<BirthdayEntry>) {
                         .alpha(0.10f)
 //                        .offset(y = 16.dp) // Shift up to align bottom with card
                         .clip(RoundedCornerShape(24.dp))
-                        .align(Alignment.BottomCenter)
+                        .align(Alignment.BottomCenter),
+                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                 )
 
                 Column(
